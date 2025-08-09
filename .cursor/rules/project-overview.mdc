@@ -1,0 +1,55 @@
+---
+alwaysApply: true
+---
+
+# fridacli 项目概览
+
+fridacli 是一个专业级的 Frida Hook 工具集，提供增强的交互式 JavaScript Hook 环境。
+
+## 核心文件结构
+
+- **[fridac](mdc:fridac)** - 主程序CLI工具，Python实现，提供交互环境和自动补全
+- **[frida_common.js](mdc:frida_common.js)** - Java Hook工具集，包含类跟踪、方法Hook等核心功能
+- **[frida_native_common.js](mdc:frida_native_common.js)** - Native Hook工具集，所有函数以`native`前缀命名
+- **[frida_location_hooks.js](mdc:frida_location_hooks.js)** - 定位Hook工具集，包含Base64、Toast、HashMap等组件Hook
+- **[README.md](mdc:README.md)** - 完整的用户文档和函数参考
+
+## 关键特性
+
+### 1. 智能ClassLoader支持
+- 自动检测动态加载的类
+- 遍历所有ClassLoader查找目标类
+- 显示详细的文件路径和ClassLoader信息
+
+### 2. smartTrace智能识别
+- 自动识别Java类vs方法
+- 优雅的回退机制
+- 支持复杂的Android应用结构
+
+### 3. 增强的调试信息
+- 彩色日志输出
+- 详细的错误信息
+- ClassLoader类型和文件路径显示
+
+### 4. 专业级用户体验
+- Tab自动补全
+- 命令历史
+- Rich表格显示
+- 优雅的错误处理
+
+## 架构原则
+
+1. **模块化设计** - 功能按用途分离到不同JS文件
+2. **向下兼容** - 支持Python 3.6.8+和旧版Frida
+3. **优雅降级** - Rich库等可选依赖的处理
+4. **智能检测** - 自动环境检测和配置
+5. **专业输出** - 结构化的日志和调试信息
+
+## 最近的重要修复
+
+1. **smartTrace函数未定义错误** - 修复RPC导出问题
+2. **ClassLoader支持增强** - 添加动态类加载支持  
+3. **路径信息显示** - 增加详细的文件来源信息
+4. **智能识别逻辑优化** - 改进类vs方法的判断逻辑
+
+这些修复确保了fridacli能够处理现代Android应用的复杂加载机制，特别是插件化、热修复和加固应用。

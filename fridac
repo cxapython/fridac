@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""
+fridac - Enhanced Frida CLI tool with interactive JavaScript shell (Modular Version)
+
+Usage:
+  fridac                              # Auto-attach to frontmost app (smart mode)
+  fridac -a                           # Show apps list for selection
+  fridac -f com.example.app           # Spawn app and attach (equivalent to: frida -U -f com.example.app)
+  fridac -p com.example.app           # Attach to specific package (equivalent to: frida -U com.example.app)
+  fridac --spawn com.example.app      # Spawn mode (same as -f)
+
+Features:
+- Interactive JavaScript shell with auto-completion
+- Automatic device detection and connection
+- Smart package name handling
+- Built-in tracing and debugging functions
+- Automatic task tracking system
+- Rich UI support
+
+Automatically detects pyenv Python version and uses corresponding Frida:
+- Python 3.6.8 -> Frida 14.x
+- Python 3.8.2 -> Frida 16.x
+"""
+
+import sys
+import os
+import argparse
+import signal
+
+# Add the fridac_core package to Python path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from fridac_core.logger import show_banner, log_info, log_success, log_error, log_warning
+from fridac_core.environment import (
+    detect_python_environment, 
+    get_frida_version, 
+    get_frontmost_app, 
+    find_target_app,
+    show_environment_info
+)
+from fridac_core.session import FridacSession, run_interactive_session
+
+def run_frida_session(spawn_mode=False, target_package=None, force_show_apps=False):
+    """Run Frida session with interactive shell"""
+    
+    if force_show_apps or not target_package:
+        # Find target app interactively
+        target_app = find_target_app()
+        if not target_app:
+            return
+    else:
+        # Use specified package
+        target_app = target_package
+        log_info("使用指定的包名: {}".format(target_app))
+    
+    session = FridacSession()
+    
+    # Setup signal handler for clean exit
+    def signal_handler(sig, frame):
+        log_info("正在退出...")
+        session.disconnect()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    # Connect to app
+    if not session.connect_to_app(target_app, spawn_mode):
+        return
+    
+    # Run interactive session
+    run_interactive_session(session)
+    
+    # Clean up
+    session.disconnect()
+
+def main():
+    """Main function"""
+    parser = argparse.ArgumentParser(
+        description='fridac - Enhanced Frida CLI tool with interactive JavaScript shell',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  fridac                                    # Auto-attach to frontmost app (smart mode)
+  fridac -a                                 # Show apps list for selection
+  fridac -f com.example.app                 # Spawn app and attach
+  fridac -p com.example.app                 # Attach to specific package
+  fridac --spawn com.example.app            # Spawn app and attach (same as -f)
+        '''
+    )
+    
+    parser.add_argument('-f', '--package', type=str,
+                       help='Specify package name to spawn and attach')
+    
+    parser.add_argument('-p', '--attach-package', type=str,
+                       help='Specify package name to attach (without spawning)')
+    
+    parser.add_argument('-a', '--apps', action='store_true',
+                       help='Show apps list for selection (original behavior)')
+    
+    parser.add_argument('--spawn', type=str,
+                       help='Spawn mode with package name (same as -f)')
+    
+    parser.add_argument('--version', action='version', 
+                       version='fridac 1.0 (Frida {})'.format(get_frida_version()))
+    
+    args = parser.parse_args()
+    
+    # Determine target package and mode
+    target_package = None
+    spawn_mode = False
+    force_show_apps = False
+    
+    if args.package:  # -f com.example.app
+        target_package = args.package
+        spawn_mode = True
+    elif args.spawn:  # --spawn com.example.app
+        target_package = args.spawn
+        spawn_mode = True
+    elif args.attach_package:  # -p com.example.app
+        target_package = args.attach_package
+        spawn_mode = False
+    elif args.apps:  # -a (show apps list)
+        force_show_apps = True
+    else:
+        # Default behavior: try to attach to frontmost app
+        frontmost_id, frontmost_name = get_frontmost_app()
+        if frontmost_id:
+            target_package = frontmost_id
+            spawn_mode = False
+            log_success("检测到前台应用: {} ({})".format(frontmost_name, frontmost_id))
+            log_info("将自动连接到此应用，如需选择其他应用请使用 'fridac -a'")
+        else:
+            log_info("没有检测到前台应用，显示应用列表...")
+            force_show_apps = True
+    
+    # Detect and display Python environment info
+    env_info = detect_python_environment()
+    
+    # Show beautiful banner and environment info
+    show_banner()
+    show_environment_info(env_info)
+    
+    try:
+        run_frida_session(spawn_mode=spawn_mode, target_package=target_package, force_show_apps=force_show_apps)
+    except KeyboardInterrupt:
+        log_info("程序被用户中断")
+    except Exception as e:
+        log_error("运行出错: {}".format(e))
+        from fridac_core.logger import is_rich_available
+        if not is_rich_available():
+            log_warning("建议安装 rich 获得更好的用户体验: pip install rich")
+
+if __name__ == '__main__':
+    main()

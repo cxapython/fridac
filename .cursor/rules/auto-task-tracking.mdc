@@ -1,0 +1,112 @@
+---
+description: fridacli自动任务追踪系统架构和开发规范
+---
+
+# fridacli 自动任务追踪系统
+
+## 核心架构
+
+fridacli 实现了全自动的Hook任务追踪系统，所有Hook函数执行时都会自动注册为可管理的任务。
+
+### 关键文件
+- **[frida_job_manager.js](mdc:frida_job_manager.js)** - 任务管理器核心，包含 `autoRegisterHook()` 方法
+- **[frida_location_hooks.js](mdc:frida_location_hooks.js)** - 定位Hook函数，已集成自动任务注册
+- **[frida_common.js](mdc:frida_common.js)** - Java Hook函数，`hookAllMethodsInJavaClass` 已集成任务管理
+- **[fridac](mdc:fridac)** - 主程序，包含自动包装器逻辑
+
+## 自动任务注册机制
+
+### 实现模式
+每个Hook函数都遵循以下模式：
+
+```javascript
+function hookFunction(args) {
+    // 1. 自动注册任务
+    var taskId = null;
+    if (typeof HookJobManager !== 'undefined') {
+        taskId = HookJobManager.autoRegisterHook('hookFunction', [args]);
+    }
+    
+    try {
+        // 2. 执行原有Hook逻辑
+        var result = originalHookLogic();
+        
+        // 3. 更新任务命中统计
+        if (taskId && typeof HookJobManager !== 'undefined') {
+            HookJobManager.updateAutoTaskHit(taskId, { executionTime: 1 });
+        }
+        
+        // 4. 返回任务ID
+        return taskId;
+    } catch (e) {
+        // 5. 错误处理
+        if (taskId && typeof HookJobManager !== 'undefined') {
+            var job = HookJobManager.getJob(taskId);
+            if (job) job.updateStatus('failed', e);
+        }
+        throw e;
+    }
+}
+```
+
+### 任务类型检测
+`HookJobManager.detectHookType()` 自动识别Hook类型：
+- `native*` 函数 → `native_hook`
+- `hook*` 函数 → `location_hook`  
+- `*Class*` 函数 → `class_hook`
+- `*Method*` 函数 → `method_hook`
+- 其他高级函数 → `advanced_hook`
+
+### 任务ID分配
+- 任务ID按执行顺序递增（#1, #2, #3...）
+- 全局唯一，便于用户记忆和管理
+- 支持通过ID进行任务控制（kill、pause、resume等）
+
+## 开发规范
+
+### 新增Hook函数
+1. **必须添加自动任务注册**：参考现有模式
+2. **错误处理**：失败时标记任务状态
+3. **命中统计**：在Hook触发时调用 `updateAutoTaskHit()`
+4. **返回值**：返回taskId以支持手动管理
+
+### 包装器机制
+对于无法直接修改的函数，使用 [fridac](mdc:fridac) 中的包装器：
+
+```javascript
+var originalFunc = global[funcName];
+global[funcName] = function() {
+    var args = Array.prototype.slice.call(arguments);
+    var taskId = HookJobManager.autoRegisterHook(funcName, args);
+    try {
+        var result = originalFunc.apply(this, args);
+        return taskId;
+    } catch (e) {
+        if (taskId) {
+            var job = HookJobManager.getJob(taskId);
+            if (job) job.updateStatus('failed', e);
+        }
+        throw e;
+    }
+};
+```
+
+### 测试验证
+确保以下功能正常：
+1. **自动注册**：Hook函数执行时自动创建任务
+2. **任务显示**：`jobs()` 能显示所有任务
+3. **任务管理**：`kill()`, `pause()`, `resume()` 正常工作
+4. **统计更新**：命中次数和时间正确更新
+5. **错误处理**：失败任务正确标记状态
+
+## 向下兼容性
+- 原有函数调用方式完全不变
+- 用户无需修改现有代码
+- 自动任务追踪是增强功能，不影响基础功能
+- 支持手动任务管理（WithJob后缀函数）和自动管理并存
+
+## 性能考虑
+- 任务注册开销极小（~1ms）
+- 使用Map结构存储任务，查找效率高
+- 自动清理机制防止内存泄漏
+- 可通过 `cleanup()` 手动清理已完成任务

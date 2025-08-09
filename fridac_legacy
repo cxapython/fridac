@@ -1,0 +1,1542 @@
+#!/usr/bin/env python3
+"""
+fridac - Enhanced Frida CLI tool with interactive JavaScript shell
+
+Usage:
+  fridac                              # Auto-attach to frontmost app (smart mode)
+  fridac -a                           # Show apps list for selection
+  fridac -f com.example.app           # Spawn app and attach (equivalent to: frida -U -f com.example.app)
+  fridac -p com.example.app           # Attach to specific package (equivalent to: frida -U com.example.app)
+  fridac --spawn com.example.app      # Spawn mode (same as -f)
+
+Features:
+- Interactive JavaScript shell with auto-completion
+- Automatic device detection and connection
+- Smart package name handling
+- Built-in tracing and debugging functions
+
+Automatically detects pyenv Python version and uses corresponding Frida:
+- Python 3.6.8 -> Frida 14.x
+- Python 3.8.2 -> Frida 16.x
+"""
+
+import sys
+import os
+import subprocess
+import argparse
+import signal
+import readline  # For better command line editing
+try:
+    import rlcompleter
+except ImportError:
+    rlcompleter = None
+import atexit
+import frida
+import threading
+import queue
+import time
+from datetime import datetime
+
+# Rich imports for beautiful UI
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.text import Text
+    from rich.prompt import Prompt, Confirm
+    from rich.progress import Progress, SpinnerColumn, TextColumn
+    from rich.syntax import Syntax
+    from rich.tree import Tree
+    from rich.columns import Columns
+    from rich.align import Align
+    from rich.layout import Layout
+    from rich.live import Live
+    from rich.box import ROUNDED, DOUBLE, SIMPLE
+    from rich.padding import Padding
+    from rich import print as rprint
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
+    Console = None
+    rprint = print
+
+# History file for command history
+HISTORY_FILE = os.path.expanduser("~/.fridac_history")
+
+# Initialize Rich console
+console = Console() if RICH_AVAILABLE else None
+
+def log_info(message, **kwargs):
+    """Enhanced info logging with rich formatting"""
+    if RICH_AVAILABLE:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        console.print(f"[dim]{timestamp}[/dim] [cyan]ℹ️[/cyan] {message}", **kwargs)
+    else:
+        print(f"ℹ️  {message}")
+
+def log_success(message, **kwargs):
+    """Enhanced success logging with rich formatting"""
+    if RICH_AVAILABLE:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        console.print(f"[dim]{timestamp}[/dim] [green]✅[/green] {message}", **kwargs)
+    else:
+        print(f"✅ {message}")
+
+def log_warning(message, **kwargs):
+    """Enhanced warning logging with rich formatting"""
+    if RICH_AVAILABLE:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        console.print(f"[dim]{timestamp}[/dim] [yellow]⚠️[/yellow] {message}", **kwargs)
+    else:
+        print(f"⚠️  {message}")
+
+def log_error(message, **kwargs):
+    """Enhanced error logging with rich formatting"""
+    if RICH_AVAILABLE:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        console.print(f"[dim]{timestamp}[/dim] [red]❌[/red] {message}", **kwargs)
+    else:
+        print(f"❌ {message}")
+
+def log_debug(message, **kwargs):
+    """Enhanced debug logging with rich formatting"""
+    if RICH_AVAILABLE:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        console.print(f"[dim]{timestamp}[/dim] [magenta]🔍[/magenta] {message}", **kwargs)
+    else:
+        print(f"🔍 {message}")
+
+def show_banner():
+    """Display beautiful fridac banner"""
+    if RICH_AVAILABLE:
+        banner_text = Text()
+        banner_text.append("🔧 ", style="bold cyan")
+        banner_text.append("fridac", style="bold green")
+        banner_text.append(" - Enhanced Frida CLI Tool", style="bold white")
+        
+        panel = Panel(
+            Align.center(banner_text),
+            box=DOUBLE,
+            border_style="cyan",
+            padding=(1, 2)
+        )
+        console.print(panel)
+    else:
+        print("🔧 fridac - Enhanced Frida CLI Tool")
+
+class FridacCompleter:
+    """Enhanced auto-completion for fridac commands with rich display"""
+    
+    def __init__(self):
+        # Available functions for completion with descriptions and examples
+        self.functions = {
+            # Java Hook 函数
+            'traceClass': ('🏛️  跟踪类的所有方法', "traceClass('com.example.MainActivity')"),
+            'hookAllMethodsInJavaClass': ('🏛️  跟踪类的所有方法（新函数名）', "hookAllMethodsInJavaClass('com.example.MainActivity')"),
+            'traceMethod': ('🎯 跟踪特定方法', "traceMethod('com.example.Class.method', true)"),
+            'hookJavaMethodWithTracing': ('🎯 跟踪特定方法（新函数名）', "hookJavaMethodWithTracing('com.example.Class.method', true)"),
+            'findClasses': ('🔍 查找匹配的类', "findClasses('MainActivity', true)"),
+            'enumAllClasses': ('📋 枚举所有已加载的类', "enumAllClasses('com.example')"),
+            'describeJavaClass': ('📖 描述Java类的详细信息', "describeJavaClass('java.lang.String')"),
+            'printStack': ('📚 打印Java调用栈', "printStack()"),
+            'findTragetClassLoader': ('🔗 查找目标类加载器', "findTragetClassLoader('com.example.Class')"),
+            'findTargetClassLoaderForClass': ('🔗 查找目标类加载器（新函数名）', "findTargetClassLoaderForClass('com.example.Class')"),
+            'printJavaCallStack': ('📚 打印Java调用栈（新函数名）', "printJavaCallStack(true, 50)"),
+            'findStrInMap': ('🗺️ 监控HashMap查找key对应value', "findStrInMap('password', 1)"),
+            
+            # 高级追踪功能（基于 r0tracer）
+            'bypassTracerPidDetection': ('🔒 绕过TracerPid检测', "bypassTracerPidDetection()"),
+            'inspectObjectFields': ('🔍 检查对象字段详情', "inspectObjectFields(this, '上下文信息')"),
+            'advancedMethodTracing': ('🎯 高级方法追踪', "advancedMethodTracing('com.example.Class.method', true, true)"),
+            'batchHookWithFilters': ('📦 批量Hook（黑白名单）', "batchHookWithFilters('com.example', 'test', null)"),
+            'hookAllApplicationClasses': ('🚀 Hook所有应用类', "hookAllApplicationClasses(true)"),
+            
+            # 任务管理系统（参考 objection）
+            'jobs': ('📋 显示所有活跃任务', "jobs()"),
+            'job': ('🔍 显示任务详情', "job(1)"),
+            'kill': ('❌ 取消指定任务', "kill(1)"),
+            'killall': ('🧹 取消所有任务', "killall()"),
+            'pause': ('⏸️ 暂停任务', "pause(1)"),
+            'resume': ('▶️ 恢复任务', "resume(1)"),
+            'jobstats': ('📊 显示任务统计', "jobstats()"),
+            'history': ('📚 显示任务历史', "history(20)"),
+            'cleanup': ('🧹 清理已完成任务', "cleanup()"),
+            'jobhelp': ('❓ 任务管理帮助', "jobhelp()"),
+            
+            # 带任务管理的Hook函数
+            'traceMethodWithJob': ('🎯 带任务管理的方法Hook', "traceMethodWithJob('com.example.Class.method', true)"),
+            'traceClassWithJob': ('🏛️ 带任务管理的类Hook', "traceClassWithJob('com.example.MainActivity')"),
+            'advancedMethodTracingWithJob': ('🔥 带任务管理的高级追踪', "advancedMethodTracingWithJob('method', true, true)"),
+            'batchHookWithJob': ('📦 带任务管理的批量Hook', "batchHookWithJob('com.example', 'test', null)"),
+            
+            # 定位Hook函数
+            'hookBase64': ('🔐 Hook Base64编码解码', "hookBase64(1)"),
+            'hookToast': ('🍞 Hook Toast显示', "hookToast(1)"),
+            'hookJSONObject': ('📝 Hook JSONObject操作', "hookJSONObject(1)"),
+            'hookHashMap': ('🗺️ Hook HashMap操作', "hookHashMap('key', 1)"),
+            'hookEditText': ('📝 Hook EditText输入', "hookEditText(1)"),
+            'hookArrayList': ('📋 Hook ArrayList操作', "hookArrayList(1)"),
+            'hookLoadLibrary': ('📚 Hook 动态库加载', "hookLoadLibrary(1)"),
+            'hookNewStringUTF': ('🔤 Hook JNI字符串创建', "hookNewStringUTF(1)"),
+            'hookFileOperations': ('📁 Hook 文件操作', "hookFileOperations(1)"),
+            'hookLog': ('📜 Hook Log输出', "hookLog(1)"),
+            'hookURL': ('🌐 Hook URL请求', "hookURL(1)"),
+            'enableAllHooks': ('🚀 启用所有定位Hook', "enableAllHooks(1)"),
+            
+            # Native Hook 函数
+            'nativeHookNativeFunction': ('🔧 Hook Native 函数', "nativeHookNativeFunction('malloc', {argTypes: ['int']})"),
+            'nativeFindModules': ('📦 查找加载的模块', "nativeFindModules(/libc/)"),
+            'nativeFindExports': ('📤 查找模块导出函数', "nativeFindExports('libc.so', /malloc/)"),
+            'nativeFindImports': ('📥 查找模块导入函数', "nativeFindImports('app', /strcpy/)"),
+            'nativeSearchMemory': ('🔍 搜索内存模式', "nativeSearchMemory('48 89 e5')"),
+            'printNativeStack': ('📚 打印Native调用栈', "printNativeStack()"),
+            
+            # 高级Native Hook
+            'nativeHookDlopenFamily': ('📚 Hook动态库加载', "nativeHookDlopenFamily(1)"),
+            'nativeHookJNIFunctions': ('☕ Hook JNI函数', "nativeHookJNIFunctions(1)"),
+            'nativeHookCryptoFunctions': ('🔐 Hook加密算法', "nativeHookCryptoFunctions('aes', 1)"),
+            'nativeHookNetworkFunctions': ('🌐 Hook网络函数', "nativeHookNetworkFunctions(1)"),
+            'nativeHookAntiDebug': ('🛡️ Hook反调试检测', "nativeHookAntiDebug(1)"),
+            'nativeAnalyzeSO': ('🔍 分析SO文件', "nativeAnalyzeSO('libtest.so', 1, 1)"),
+            'nativeEnableAllHooks': ('🚀 启用所有Native Hook', "nativeEnableAllHooks(1)"),
+            'nativeQuickHookCrypto': ('⚡ 快速Hook加密', "nativeQuickHookCrypto('md5')"),
+            'nativeQuickHookNetwork': ('⚡ 快速Hook网络', "nativeQuickHookNetwork()"),
+            'nativeQuickAnalyzeApp': ('⚡ 快速分析应用', "nativeQuickAnalyzeApp()"),
+            
+            # 智能工具
+            'smartTrace': ('🎯 智能识别并Hook目标', "smartTrace('com.example.MainActivity')"),
+            'intelligentHookDispatcher': ('🎯 智能识别并Hook目标（新函数名）', "intelligentHookDispatcher('com.example.MainActivity', {enableStackTrace: true})"),
+            'loadNativeSupport': ('🔧 加载Native Hook工具', "loadNativeSupport()"),
+            
+            # 工具函数
+            'uniqBy': ('🎲 数组去重工具', "uniqBy(array, function(item) { return item.id; })"),
+            'bytesToString': ('🔤 字节转换为字符串', "bytesToString([72, 101, 108, 108, 111])"),
+            'LOG': ('📝 增强的日志输出', "LOG('message', {c: Color.Green})"),
+            'Color': ('🎨 颜色常量', "Color.Red, Color.Green, Color.Blue"),
+            'help': ('❓ 显示帮助信息', "help()"),
+            'q': ('🚪 退出程序', "q"),
+            'quit': ('🚪 退出程序', "quit"),
+            'exit': ('🚪 退出程序', "exit")
+        }
+        
+        # Common Java class patterns for suggestions with categories
+        self.common_patterns = {
+            'Android系统类': [
+                'com.android.', 'android.app.', 'android.content.',
+                'android.view.', 'android.widget.', 'android.os.',
+                'android.util.', 'android.net.'
+            ],
+            '常见应用包名': [
+                'com.google.', 'com.facebook.', 'com.tencent.',
+                'com.alibaba.', 'com.baidu.', 'com.sina.', 'com.xiaomi.',
+                'com.huawei.', 'com.oppo.', 'com.vivo.'
+            ],
+            'Java标准库': [
+                'java.lang.', 'java.util.', 'java.io.',
+                'java.net.', 'java.security.', 'java.text.'
+            ],
+            'Android组件': [
+                'MainActivity', 'Application', 'Activity', 'Service', 
+                'Fragment', 'BroadcastReceiver', 'ContentProvider'
+            ]
+        }
+    
+    def show_completion_help(self):
+        """Display beautiful completion help using rich"""
+        if not RICH_AVAILABLE:
+            return
+            
+        # Create detailed function table with descriptions and examples
+        func_table = Table(title="🚀 可用函数", box=ROUNDED, show_header=True, header_style="bold magenta")
+        func_table.add_column("描述", style="green", width=40)
+        func_table.add_column("使用示例", style="yellow", width=55)
+        
+        # Select key functions to display (avoid overwhelming the user)
+        key_functions = [
+            ('traceClass', '🏛️ 跟踪类的所有方法', "traceClass('com.example.MainActivity')"),
+            ('hookAllMethodsInJavaClass', '🏛️ 跟踪类的所有方法（新函数名）', "hookAllMethodsInJavaClass('com.example.MainActivity')"),
+            ('traceMethod', '🎯 跟踪特定方法', "traceMethod('com.example.Class.method', true)"),
+            ('hookJavaMethodWithTracing', '🎯 跟踪特定方法（新函数名）', "hookJavaMethodWithTracing('com.example.Class.method', true)"),
+            ('findClasses', '🔍 查找匹配的类', "findClasses('MainActivity', true)"),
+            ('enumAllClasses', '📋 枚举所有已加载的类', "enumAllClasses('com.example')"),
+            ('describeJavaClass', '📖 描述Java类的详细信息', "describeJavaClass('java.lang.String')"),
+            ('printStack', '📚 打印Java调用栈', "printStack()"),
+            ('findTargetClassLoaderForClass', '🔗 查找目标类加载器（新函数名）', "findTargetClassLoaderForClass('com.example.Class')"),
+            ('printJavaCallStack', '📚 打印Java调用栈（新函数名）', "printJavaCallStack(true, 50)"),
+            ('findStrInMap', '🗺️ 监控HashMap查找key对应value', "findStrInMap('password', 1)"),
+            ('bypassTracerPidDetection', '🔒 绕过TracerPid检测', "bypassTracerPidDetection()"),
+            ('inspectObjectFields', '🔍 检查对象字段详情', "inspectObjectFields(this, '上下文信息')"),
+            ('advancedMethodTracing', '🎯 高级方法追踪', "advancedMethodTracing('com.example.Class.method', true, true)"),
+            ('batchHookWithFilters', '📦 批量Hook（黑白名单）', "batchHookWithFilters('com.example', 'test', null)"),
+            ('hookAllApplicationClasses', '🚀 Hook所有应用类', "hookAllApplicationClasses(true)"),
+            ('jobs', '📋 显示所有活跃任务', "jobs()"),
+            ('job', '🔍 显示任务详情', "job(1)"),
+            ('kill', '❌ 取消指定任务', "kill(1)"),
+            ('killall', '🧹 取消所有任务', "killall()"),
+            ('jobstats', '📊 显示任务统计', "jobstats()"),
+            ('traceMethodWithJob', '🎯 带任务管理的方法Hook', "traceMethodWithJob('com.example.Class.method', true)"),
+            ('hookBase64', '🔐 Hook Base64编码解码', "hookBase64(1)"),
+            ('hookToast', '🍞 Hook Toast显示', "hookToast(1)"),
+            ('hookJSONObject', '📝 Hook JSONObject操作', "hookJSONObject(1)"),
+            ('hookHashMap', '🗺️ Hook HashMap操作', "hookHashMap('key', 1)"),
+            ('enableAllHooks', '🚀 启用所有定位Hook', "enableAllHooks(1)"),
+            ('nativeHookCryptoFunctions', '🔐 Hook加密算法', "nativeHookCryptoFunctions('aes', 1)"),
+            ('nativeAnalyzeSO', '🔍 分析SO文件', "nativeAnalyzeSO('libtest.so', 1, 1)"),
+            ('smartTrace', '🎯 智能识别并Hook目标', "smartTrace('com.example.MainActivity')"),
+            ('intelligentHookDispatcher', '🎯 智能识别并Hook目标（新函数名）', "intelligentHookDispatcher('com.example.MainActivity', {enableStackTrace: true})"),
+            ('help', '❓ 显示帮助信息', "help()"),
+        ]
+        
+        for func_name, description, example in key_functions:
+            # Highlight function name in example
+            highlighted_example = example.replace(func_name, f"[cyan]{func_name}[/cyan]")
+            func_table.add_row(description, highlighted_example)
+        
+        # Create patterns tree
+        patterns_tree = Tree("📁 [bold blue]常用类名模式[/bold blue]")
+        for category, patterns in self.common_patterns.items():
+            category_branch = patterns_tree.add(f"[yellow]{category}[/yellow]")
+            for pattern in patterns[:3]:  # Show first 3 in each category
+                category_branch.add(f"[dim]{pattern}...[/dim]")
+        
+        # Display function table and patterns
+        console.print()
+        console.print(func_table)
+        console.print("💡 [bold blue]连接应用后使用 help() 查看所有函数的详细说明[/bold blue]")
+        console.print()
+    
+    def complete(self, text, state):
+        """Enhanced completion with rich pattern matching"""
+        if state == 0:
+            # First time this text is completed
+            self.matches = []
+            
+            if text:
+                # Match function names
+                for func in self.functions.keys():
+                    if func.startswith(text):
+                        self.matches.append(f"{func}(")
+                
+                # If inside quotes, suggest common patterns
+                if '"' in readline.get_line_buffer() or "'" in readline.get_line_buffer():
+                    for category, patterns in self.common_patterns.items():
+                        for pattern in patterns:
+                            if pattern.startswith(text):
+                                self.matches.append(pattern)
+            else:
+                # No text yet, show all functions
+                self.matches = [f"{func}(" for func in self.functions.keys()]
+        
+        # Return the next match
+        if state < len(self.matches):
+            return self.matches[state]
+        else:
+            return None
+
+def setup_history():
+    """Setup command history and auto-completion"""
+    try:
+        readline.read_history_file(HISTORY_FILE)
+        readline.set_history_length(1000)
+    except FileNotFoundError:
+        pass
+    
+    # Setup auto-completion
+    completer = FridacCompleter()
+    readline.set_completer(completer.complete)
+    
+    # Enable tab completion
+    if rlcompleter:
+        readline.parse_and_bind("tab: complete")
+    
+    # Set completion delimiters (don't break on these characters)
+    readline.set_completer_delims(' \t\n`!@#$%^&*()=+[{]}\\|;:,<>?')
+    
+    def save_history():
+        try:
+            readline.write_history_file(HISTORY_FILE)
+        except:
+            pass
+    
+    atexit.register(save_history)
+
+def detect_python_environment():
+    """Detect current Python environment and corresponding Frida version"""
+    python_info = {
+        'version': 'unknown',
+        'executable': sys.executable,
+        'frida_version': 'unknown',
+        'using_pyenv': False
+    }
+    
+    try:
+        # Get Python version
+        python_version = "{}.{}.{}".format(sys.version_info.major, sys.version_info.minor, sys.version_info.micro)
+        python_info['version'] = python_version
+        
+        # Check if pyenv is available and active
+        pyenv_available = False
+        try:
+            pyenv_result = subprocess.run(['pyenv', 'version'], 
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        universal_newlines=True)
+            if pyenv_result.returncode == 0:
+                pyenv_version = pyenv_result.stdout.split()[0]
+                python_info['pyenv_version'] = pyenv_version
+                python_info['using_pyenv'] = True
+                pyenv_available = True
+        except FileNotFoundError:
+            # pyenv not found, use system python3
+            pass
+        except:
+            pass
+        
+        # Determine which Python to use for Frida
+        python_executable = sys.executable
+        if not pyenv_available:
+            # Try to use python3 if available and current is not python3
+            try:
+                # Check if python3 is available
+                python3_result = subprocess.run(['python3', '--version'], 
+                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                              universal_newlines=True)
+                if python3_result.returncode == 0:
+                    # Use python3 as preferred executable
+                    python_executable = 'python3'
+                    python_info['executable'] = python_executable
+                    # Update version info from python3
+                    version_output = python3_result.stdout.strip()
+                    if 'Python' in version_output:
+                        version_parts = version_output.split()[1].split('.')
+                        if len(version_parts) >= 3:
+                            python_info['version'] = "{}.{}.{}".format(version_parts[0], version_parts[1], version_parts[2])
+            except:
+                # Fallback to current executable
+                pass
+        
+        # Get Frida version using the determined executable
+        frida_commands = [
+            [python_executable, '-m', 'frida', '--version'],
+            [python_executable, '-m', 'frida_tools.frida', '--version'],
+            ['frida', '--version']  # System frida as fallback
+        ]
+        
+        for cmd in frida_commands:
+            try:
+                result = subprocess.run(cmd, 
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                                      universal_newlines=True, timeout=5)
+                if result.returncode == 0:
+                    python_info['frida_version'] = result.stdout.strip()
+                    break
+            except:
+                continue
+            
+    except Exception as e:
+        log_warning("检测Python环境时出错: {}".format(e))
+    
+    return python_info
+
+def get_frida_version():
+    """Get current Frida version"""
+    try:
+        # Use environment detection to get the correct Python executable
+        env_info = detect_python_environment()
+        return env_info.get('frida_version', 'unknown')
+    except:
+        return "unknown"
+
+def get_frontmost_app():
+    """Get the frontmost (current foreground) application"""
+    try:
+        device = frida.get_usb_device()
+        frontmost_app = device.get_frontmost_application()
+        if frontmost_app and frontmost_app.identifier:
+            return frontmost_app.identifier, frontmost_app.name
+        return None, None
+    except Exception as e:
+        log_error("获取前台应用失败: {}".format(e))
+        return None, None
+
+def find_target_app():
+    """Find the target application automatically"""
+    try:
+        # Detect environment to get the correct Python executable
+        env_info = detect_python_environment()
+        python_executable = env_info.get('executable', sys.executable)
+        
+        # Get list of running apps using determined Python executable
+        frida_ps_commands = [
+            [python_executable, '-m', 'frida_tools.ps', '-Ua'],
+            [python_executable, '-m', 'frida_tools.frida_ps', '-Ua'],
+            ['frida-ps', '-Ua']  # System frida-ps as fallback
+        ]
+        
+        result = None
+        for cmd in frida_ps_commands:
+            try:
+                result = subprocess.run(cmd, 
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      universal_newlines=True, timeout=10)
+                if result.returncode == 0:
+                    break
+            except:
+                continue
+        
+        if not result or result.returncode != 0:
+            log_error("无法获取应用列表，请检查 Frida 安装")
+            return None
+        
+        lines = result.stdout.strip().split('\n')[1:]  # Skip header
+        
+        if not lines:
+            log_error("没有找到运行的应用程序")
+            return None
+        
+        # Parse apps data
+        apps = []
+        for line in lines:
+            line = line.strip()
+            if not line:  # Skip empty lines
+                continue
+            # frida-ps -Ua output: PID, Name, Identifier
+            # Split into at most 3 parts to handle spaces in names
+            parts = line.split(None, 2)
+            if len(parts) >= 3:
+                pid = parts[0]
+                name = parts[1]
+                identifier = parts[2]
+                # Validate PID is numeric
+                if pid.isdigit():
+                    apps.append((pid, name, identifier))
+        
+        if not apps:
+            log_error("没有找到可用的应用程序")
+            return None
+        
+        # Show available apps with rich table
+        if RICH_AVAILABLE:
+            app_table = Table(title="📱 可用的应用程序", box=ROUNDED, show_header=True, header_style="bold cyan")
+            app_table.add_column("序号", style="magenta", width=6, justify="center")
+            app_table.add_column("应用名称", style="green", min_width=15)
+            app_table.add_column("包名", style="blue", min_width=20)
+            app_table.add_column("PID", style="yellow", width=8, justify="center")
+            
+            for i, (pid, name, identifier) in enumerate(apps, 1):
+                app_table.add_row(str(i), name, identifier, pid)
+            
+            console.print()
+            console.print(app_table)
+            console.print()
+        else:
+            log_info("可用的应用程序:")
+            for i, (pid, name, identifier) in enumerate(apps, 1):
+                print("  [{}] {} {} (PID: {})".format(i, name, identifier, pid))
+            
+        # Auto-select if only one app, otherwise ask user
+        if len(apps) == 1:
+            selected_app = apps[0]
+            log_success("自动选择: {} {}".format(selected_app[1], selected_app[2]))
+            return selected_app[2]  # Return identifier (package name)
+        else:
+            while True:
+                try:
+                    if RICH_AVAILABLE:
+                        choice = Prompt.ask(
+                            "\n[bold cyan]请选择应用程序[/bold cyan]",
+                            choices=[str(i) for i in range(1, len(apps) + 1)] + ['q', 'quit', 'exit'],
+                            default='q',
+                            show_choices=False
+                        ).strip()
+                        console.print(f"[dim]输入: {choice}[/dim]")
+                    else:
+                        choice = input("\n请选择应用程序 (输入序号或 'q' 退出): ").strip()
+                    
+                    # Check for quit command
+                    if choice.lower() in ['q', 'quit', 'exit']:
+                        log_info("退出选择")
+                        return None
+                    
+                    if choice.isdigit():
+                        idx = int(choice) - 1
+                        if 0 <= idx < len(apps):
+                            selected_app = apps[idx]
+                            log_success("选择了: {} {}".format(selected_app[1], selected_app[2]))
+                            return selected_app[2]  # Return identifier (package name)
+                    
+                    log_warning("无效的选择，请重新输入 (1-{} 或 q)".format(len(apps)))
+                except KeyboardInterrupt:
+                    log_info("操作取消")
+                    return None
+                    
+    except Exception as e:
+        log_error("获取应用程序列表失败: {}".format(e))
+        return None
+
+def create_frida_script():
+    """Create the Frida script with all our functions"""
+    # Try to find frida_common.js in multiple locations
+    possible_paths = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida_common.js'),
+        os.path.join(os.path.expanduser('~'), 'fridaproject', 'frida_common.js'),
+        'frida_common.js',  # Absolute fallback
+        './frida_common.js'  # Current directory
+    ]
+    
+    script_path = None
+    for path in possible_paths:
+        if os.path.exists(path):
+            script_path = path
+            break
+    
+    if not script_path:
+        log_error("找不到 frida_common.js 文件，已尝试路径:")
+        for path in possible_paths:
+            log_debug("   - {}".format(path))
+        return None
+        
+    with open(script_path, 'r', encoding='utf-8') as f:
+        js_content = f.read()
+    
+    # Try to load Native Hook tools as well
+    native_paths = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida_native_common.js'),
+        os.path.join(os.path.expanduser('~'), 'fridaproject', 'frida_native_common.js'),
+        'frida_native_common.js',
+        './frida_native_common.js'
+    ]
+    
+    native_script_path = None
+    for path in native_paths:
+        if os.path.exists(path):
+            native_script_path = path
+            break
+    
+    if native_script_path:
+        log_debug("找到 Native Hook 工具: {}".format(native_script_path))
+        try:
+            with open(native_script_path, 'r', encoding='utf-8') as f:
+                native_content = f.read()
+            js_content += '\n\n// ===== Native Hook Tools =====\n'
+            js_content += native_content
+            log_debug("Native Hook 工具已集成")
+        except Exception as e:
+            log_warning("加载 Native Hook 工具失败: {}".format(e))
+    else:
+        log_debug("未找到 frida_native_common.js，仅加载 Java Hook 工具")
+    
+    # Try to load Location Hook tools as well
+    location_paths = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida_location_hooks.js'),
+        os.path.join(os.path.expanduser('~'), 'fridaproject', 'frida_location_hooks.js'),
+        'frida_location_hooks.js',
+        './frida_location_hooks.js'
+    ]
+    
+    location_script_path = None
+    for path in location_paths:
+        if os.path.exists(path):
+            location_script_path = path
+            break
+    
+    if location_script_path:
+        log_debug("找到定位Hook工具: {}".format(location_script_path))
+        try:
+            with open(location_script_path, 'r', encoding='utf-8') as f:
+                location_content = f.read()
+            js_content += '\n\n// ===== Location Hook Tools =====\n'
+            js_content += location_content
+            log_debug("定位Hook工具已集成")
+        except Exception as e:
+            log_warning("加载定位Hook工具失败: {}".format(e))
+    else:
+        log_debug("未找到 frida_location_hooks.js，定位工具不可用")
+    
+    # 集成高级追踪功能
+    advanced_tracer_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida_advanced_tracer.js')
+    if os.path.exists(advanced_tracer_path):
+        try:
+            with open(advanced_tracer_path, 'r', encoding='utf-8') as f:
+                advanced_content = f.read()
+            js_content += '\n\n// ===== Advanced Tracer Tools (Based on r0tracer) =====\n'
+            js_content += advanced_content
+            log_debug("高级追踪工具已集成（基于 r0tracer）")
+        except Exception as e:
+            log_warning("加载高级追踪工具失败: {}".format(e))
+    else:
+        log_debug("未找到 frida_advanced_tracer.js，高级追踪工具不可用")
+    
+    # 集成任务管理系统
+    job_manager_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida_job_manager.js')
+    if os.path.exists(job_manager_path):
+        try:
+            with open(job_manager_path, 'r', encoding='utf-8') as f:
+                job_manager_content = f.read()
+            js_content += '\n\n// ===== Hook Job Management System =====\n'
+            js_content += job_manager_content
+            log_debug("任务管理系统已集成")
+        except Exception as e:
+            log_warning("加载任务管理系统失败: {}".format(e))
+    else:
+        log_debug("未找到 frida_job_manager.js，任务管理不可用")
+    
+    # 集成任务管理命令
+    job_commands_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida_job_commands.js')
+    if os.path.exists(job_commands_path):
+        try:
+            with open(job_commands_path, 'r', encoding='utf-8') as f:
+                job_commands_content = f.read()
+            js_content += '\n\n// ===== Job Management Commands =====\n'
+            js_content += job_commands_content
+            log_debug("任务管理命令已集成")
+        except Exception as e:
+            log_warning("加载任务管理命令失败: {}".format(e))
+    else:
+        log_debug("未找到 frida_job_commands.js，任务管理命令不可用")
+    
+    # Add interactive shell initialization and Java.perform wrapper
+    js_content = '''
+Java.perform(function() {
+''' + js_content + '''
+
+// Interactive shell functions
+function help() {
+    LOG("\\n📚 fridac - 完整函数参考手册", { c: Color.Cyan });
+    LOG("=" + "=".repeat(80), { c: Color.Gray });
+    
+    LOG("\\n☕ Java Hook 函数:", { c: Color.Green });
+    LOG("  📋 类追踪:", { c: Color.Blue });
+    LOG("    traceClass(className) - 跟踪类的所有方法", { c: Color.White });
+    LOG("    hookAllMethodsInJavaClass(className) - 跟踪类的所有方法（新函数名）", { c: Color.White });
+    LOG("      示例: traceClass('com.example.MainActivity')", { c: Color.Yellow });
+    
+    LOG("  🎯 方法追踪:", { c: Color.Blue });
+    LOG("    traceMethod(classMethod, showTrace, returnValue) - 跟踪特定方法", { c: Color.White });
+    LOG("    hookJavaMethodWithTracing(methodName, enableStackTrace, customReturnValue) - 跟踪特定方法（新函数名）", { c: Color.White });
+    LOG("      示例: traceMethod('com.example.MainActivity.onCreate', true)", { c: Color.Yellow });
+    
+    LOG("  🔍 类查找:", { c: Color.Blue });
+    LOG("    findClasses(pattern, showMethods) - 查找类", { c: Color.White });
+    LOG("    enumAllClasses(pattern) - 枚举所有类", { c: Color.White });
+    LOG("    describeJavaClass(className) - 描述Java类详细信息", { c: Color.White });
+    LOG("      示例: findClasses('MainActivity', true)", { c: Color.Yellow });
+    
+    LOG("  🗺️ 对象监控:", { c: Color.Blue });
+    LOG("    findStrInMap(key, showStack) - 监控HashMap查找key对应value", { c: Color.White });
+    LOG("      示例: findStrInMap('password', 1)  // 1=显示调用栈, 0=不显示", { c: Color.Yellow });
+    
+    if (typeof hookBase64 !== 'undefined') {
+        LOG("\\n📍 定位Hook函数:", { c: Color.Green });
+        LOG("  🔐 编码解码:", { c: Color.Blue });
+        LOG("    hookBase64(showStack) - Hook Base64编码解码", { c: Color.White });
+        
+        LOG("  📱 界面组件:", { c: Color.Blue });
+        LOG("    hookToast(showStack) - Hook Toast显示", { c: Color.White });
+        LOG("    hookEditText(showStack) - Hook EditText输入", { c: Color.White });
+        
+        LOG("  📊 数据结构:", { c: Color.Blue });
+        LOG("    hookJSONObject(showStack) - Hook JSONObject操作", { c: Color.White });
+        LOG("    hookHashMap(key, showStack) - Hook HashMap操作", { c: Color.White });
+        LOG("    hookArrayList(showStack) - Hook ArrayList操作", { c: Color.White });
+        
+        LOG("  📚 系统功能:", { c: Color.Blue });
+        LOG("    hookLoadLibrary(showStack) - Hook 动态库加载", { c: Color.White });
+        LOG("    hookNewStringUTF(showStack) - Hook JNI字符串创建", { c: Color.White });
+        LOG("    hookFileOperations(showStack) - Hook 文件操作", { c: Color.White });
+        LOG("    hookLog(showStack) - Hook Log输出", { c: Color.White });
+        LOG("    hookURL(showStack) - Hook URL请求", { c: Color.White });
+        
+        LOG("  🚀 批量操作:", { c: Color.Blue });
+        LOG("    enableAllHooks(showStack) - 一键启用所有定位Hook", { c: Color.White });
+        LOG("      示例: enableAllHooks(1)  // 启用所有Hook并显示调用栈", { c: Color.Yellow });
+    } else {
+        LOG("\\n📍 定位Hook工具: 未加载", { c: Color.Yellow });
+        LOG("  需要 frida_location_hooks.js 文件", { c: Color.Gray });
+    }
+    
+    if (typeof nativeHookNativeFunction !== 'undefined') {
+        LOG("\\n🔧 Native Hook 函数:", { c: Color.Green });
+        LOG("  🔍 基础工具:", { c: Color.Blue });
+        LOG("    nativeHookNativeFunction(address, options) - Hook Native 函数", { c: Color.White });
+        LOG("    nativeFindModules(pattern) - 查找模块", { c: Color.White });
+        LOG("    nativeFindExports(module, pattern) - 查找导出函数", { c: Color.White });
+        LOG("    nativeSearchMemory(pattern) - 搜索内存", { c: Color.White });
+        LOG("    printNativeStack() - 打印Native调用栈", { c: Color.White });
+        
+        if (typeof nativeHookDlopenFamily !== 'undefined') {
+            LOG("  🚀 高级Hook:", { c: Color.Blue });
+            LOG("    nativeHookDlopenFamily(showStack) - Hook动态库加载", { c: Color.White });
+            LOG("    nativeHookJNIFunctions(showStack) - Hook JNI函数", { c: Color.White });
+            LOG("    nativeHookAntiDebug(showStack) - Hook反调试检测", { c: Color.White });
+            
+            LOG("  🔐 加密Hook:", { c: Color.Blue });
+            LOG("    nativeHookCryptoFunctions(algorithm, showStack) - Hook加密算法", { c: Color.White });
+            LOG("      支持算法: aes, des, md5, sha, all", { c: Color.Yellow });
+            
+            LOG("  🌐 网络Hook:", { c: Color.Blue });
+            LOG("    nativeHookNetworkFunctions(showStack) - Hook网络函数", { c: Color.White });
+            
+            LOG("  📊 分析工具:", { c: Color.Blue });
+            LOG("    nativeAnalyzeSO(soName, showExports, showImports) - 分析SO文件", { c: Color.White });
+            
+            LOG("  ⚡ 便捷函数:", { c: Color.Blue });
+            LOG("    nativeQuickHookCrypto(algorithm) - 快速Hook加密算法", { c: Color.White });
+            LOG("    nativeQuickHookNetwork() - 快速Hook网络相关", { c: Color.White });
+            LOG("    nativeQuickAnalyzeApp() - 快速分析应用信息", { c: Color.White });
+            LOG("    nativeEnableAllHooks(showStack) - 一键启用所有Native Hook", { c: Color.White });
+            LOG("      示例: nativeEnableAllHooks(1)  // 启用所有并显示调用栈", { c: Color.Yellow });
+        }
+    } else {
+        LOG("\\n🔧 Native Hook 工具: 未加载", { c: Color.Yellow });
+        LOG("  运行 loadNativeSupport() 尝试加载", { c: Color.Gray });
+    }
+    
+    LOG("\\n🎯 智能工具:", { c: Color.Green });
+    LOG("  smartTrace(target, options) / intelligentHookDispatcher(targetIdentifier, hookOptions) - 智能识别并Hook目标", { c: Color.White });
+    LOG("    示例: smartTrace('com.example.MainActivity')", { c: Color.Yellow });
+    LOG("    新示例: intelligentHookDispatcher('com.example.MainActivity', {enableStackTrace: true})", { c: Color.Yellow });
+    LOG("    示例: smartTrace('malloc', {showArgs: true})", { c: Color.Yellow });
+    
+    LOG("\\n🛠️  工具函数:", { c: Color.Green });
+    LOG("  printStack() / printJavaCallStack(showComplete, maxLines) - 打印Java调用栈", { c: Color.White });
+    if (typeof printNativeStack !== 'undefined') {
+        LOG("  printNativeStack() - 打印Native调用栈", { c: Color.White });
+    }
+    
+    LOG("\\n🔥 高级追踪功能 (基于 r0tracer):", { c: Color.Red });
+    LOG("  bypassTracerPidDetection() - 绕过TracerPid反调试检测", { c: Color.White });
+    LOG("  inspectObjectFields(obj, context) - 检查对象所有字段详情", { c: Color.White });
+    LOG("  advancedMethodTracing(method, enableFields, enableColor) - 高级方法追踪", { c: Color.White });
+    LOG("    示例: advancedMethodTracing('com.example.Class.method', true, true)", { c: Color.Yellow });
+    LOG("  batchHookWithFilters(whitelist, blacklist, targetClass) - 批量Hook（黑白名单过滤）", { c: Color.White });
+    LOG("    示例: batchHookWithFilters('com.example', 'test', null)", { c: Color.Yellow });
+    LOG("  hookAllApplicationClasses(strictFilter) - Hook所有应用业务类", { c: Color.White });
+    LOG("    示例: hookAllApplicationClasses(true)", { c: Color.Yellow });
+    
+    LOG("\\n📋 任务管理系统 (参考 objection):", { c: Color.Red });
+    LOG("  jobs() - 显示所有活跃的Hook任务", { c: Color.White });
+    LOG("  job(id) - 显示指定任务的详细信息", { c: Color.White });
+    LOG("  kill(id) - 取消指定的Hook任务", { c: Color.White });
+    LOG("  killall() - 取消所有Hook任务", { c: Color.White });
+    LOG("  pause(id) / resume(id) - 暂停/恢复任务", { c: Color.White });
+    LOG("  jobstats() - 显示任务统计信息", { c: Color.White });
+    LOG("  history() - 显示任务历史记录", { c: Color.White });
+    LOG("  cleanup() - 清理已完成的任务", { c: Color.White });
+    LOG("  jobhelp() - 显示任务管理详细帮助", { c: Color.White });
+    
+    LOG("\\n🎯 带任务管理的Hook函数:", { c: Color.Green });
+    LOG("  traceMethodWithJob(method, showStack, retVal) - 可管理的方法Hook", { c: Color.White });
+    LOG("  traceClassWithJob(className) - 可管理的类Hook", { c: Color.White });
+    LOG("  advancedMethodTracingWithJob(method, fields, color) - 可管理的高级追踪", { c: Color.White });
+    LOG("  batchHookWithJob(whitelist, blacklist, targetClass) - 可管理的批量Hook", { c: Color.White });
+    LOG("    示例: var jobId = traceMethodWithJob('com.example.Class.method', true)", { c: Color.Yellow });
+    LOG("          kill(jobId)  // 取消这个Hook", { c: Color.Yellow });
+    LOG("  LOG(message, options) - 增强的日志输出", { c: Color.White });
+    LOG("  loadNativeSupport() - 加载Native Hook工具", { c: Color.White });
+    LOG("  help() - 显示此帮助", { c: Color.White });
+    
+    LOG("\\n🎯 实战使用方案:", { c: Color.Green });
+    LOG("  📋 新手入门:", { c: Color.Blue });
+    LOG("    1. 首先查找目标类: findClasses('MainActivity', true)", { c: Color.White });
+    LOG("    2. 跟踪类的所有方法: traceClass('com.example.MainActivity')", { c: Color.White });
+    LOG("    3. 重点方法详细分析: traceMethod('com.example.MainActivity.onCreate', true)", { c: Color.White });
+    LOG("    4. 搜索敏感字符串: findStrInMap('password', 1)", { c: Color.White });
+    
+    LOG("\\n  🔍 逆向分析工作流:", { c: Color.Blue });
+    LOG("    第一步 - 应用分析:", { c: Color.Cyan });
+    LOG("      enumAllClasses('com.yourapp')  // 枚举应用所有类", { c: Color.Yellow });
+    LOG("      nativeQuickAnalyzeApp()         // 快速分析SO和JNI", { c: Color.Yellow });
+    LOG("      hookLoadLibrary(1)              // 监控动态库加载", { c: Color.Yellow });
+    
+    LOG("\\n    第二步 - 关键点定位:", { c: Color.Cyan });
+    LOG("      hookBase64(1)                   // 监控Base64编解码", { c: Color.Yellow });
+    LOG("      hookJSONObject(1)               // 监控JSON数据", { c: Color.Yellow });
+    LOG("      hookURL(1)                      // 监控网络请求", { c: Color.Yellow });
+    LOG("      hookEditText(1)                 // 监控用户输入", { c: Color.Yellow });
+    
+    LOG("\\n    第三步 - 深入Hook分析:", { c: Color.Cyan });
+    LOG("      advancedMethodTracing('target.method', true, true)  // 高级追踪", { c: Color.Yellow });
+    LOG("      batchHookWithFilters('com.app', 'test', null)       // 批量Hook", { c: Color.Yellow });
+    LOG("      inspectObjectFields(obj, 'login检查')                // 对象字段分析", { c: Color.Yellow });
+    
+    LOG("\\n  🔐 安全绕过实例:", { c: Color.Blue });
+    LOG("    反调试绕过:", { c: Color.Cyan });
+    LOG("      bypassTracerPidDetection()      // 绕过TracerPid检测", { c: Color.Yellow });
+    LOG("      nativeHookAntiDebug(1)          // Hook反调试函数", { c: Color.Yellow });
+    
+    LOG("\\n    SSL Pinning绕过:", { c: Color.Cyan });
+    LOG("      nativeHookCryptoFunctions('all', 1)  // Hook所有加密函数", { c: Color.Yellow });
+    LOG("      hookURL(1)                           // 监控HTTPS请求", { c: Color.Yellow });
+    
+    LOG("\\n    Root检测绕过:", { c: Color.Cyan });
+    LOG("      findClasses('root', true)            // 查找Root检测相关类", { c: Color.Yellow });
+    LOG("      traceMethod('com.app.RootChecker.isRooted', true)  // Hook检测方法", { c: Color.Yellow });
+    
+    LOG("\\n  📋 任务管理最佳实践:", { c: Color.Blue });
+    LOG("    长期监控场景:", { c: Color.Cyan });
+    LOG("      var id1 = traceMethodWithJob('login.method', true)   // 创建可管理Hook", { c: Color.Yellow });
+    LOG("      var id2 = traceClassWithJob('NetworkHandler')        // 网络类监控", { c: Color.Yellow });
+    LOG("      jobs()                                              // 查看所有活跃任务", { c: Color.Yellow });
+    LOG("      jobstats()                                          // 查看任务统计", { c: Color.Yellow });
+    LOG("      kill(id1)                                           // 取消特定任务", { c: Color.Yellow });
+    
+    LOG("\\n  💡 高级技巧:", { c: Color.Blue });
+    LOG("    组合使用示例:", { c: Color.Cyan });
+    LOG("      // 完整的登录流程分析", { c: Color.Gray });
+    LOG("      smartTrace('LoginActivity')     // 智能识别登录相关", { c: Color.Yellow });
+    LOG("      hookEditText(1)                // 监控用户输入", { c: Color.Yellow });
+    LOG("      hookBase64(1)                  // 监控密码编码", { c: Color.Yellow });
+    LOG("      findStrInMap('token', 1)       // 监控token生成", { c: Color.Yellow });
+    
+    LOG("\\n    性能优化:", { c: Color.Cyan });
+    LOG("      // 使用黑白名单减少Hook数量", { c: Color.Gray });
+    LOG("      batchHookWithFilters('com.target', 'test,debug', 'LoginActivity')  // 精准Hook", { c: Color.Yellow });
+    LOG("      // 暂停不需要的任务", { c: Color.Gray });
+    LOG("      pause(taskId)                  // 暂停任务而不删除", { c: Color.Yellow });
+    
+    LOG("\\n💡 使用提示:", { c: Color.Green });
+    LOG("  • 使用 Tab 键自动补全函数名和包名", { c: Color.Gray });
+    LOG("  • 支持链式调用和复杂表达式", { c: Color.Gray });
+    LOG("  • 输入 q 或 exit 退出程序", { c: Color.Gray });
+    LOG("  • 所有函数都支持丰富的参数选项", { c: Color.Gray });
+    LOG("  • 建议先使用smartTrace()进行智能识别", { c: Color.Gray });
+    LOG("  • 长期监控建议使用带Job的函数版本", { c: Color.Gray });
+    LOG("\\n" + "=".repeat(75) + "\\n", { c: Color.Gray });
+}
+
+// RPC exports for interactive shell
+rpc.exports = {
+    // 帮助和核心
+    help: help,
+    eval: function(code) {
+        try {
+            return eval(code);
+        } catch (e) {
+            LOG("❌ 错误: " + e.message, { c: Color.Red });
+            return null;
+        }
+    },
+    
+    // Java Hook 函数
+    traceClass: traceClass,
+    hookAllMethodsInJavaClass: hookAllMethodsInJavaClass,
+    traceMethod: traceMethod,
+    hookJavaMethodWithTracing: hookJavaMethodWithTracing,
+    findClasses: findClasses,
+    enumAllClasses: enumAllClasses,
+    describeJavaClass: describeJavaClass,
+    printStack: printStack,
+    findTragetClassLoader: findTragetClassLoader,
+    findTargetClassLoaderForClass: findTargetClassLoaderForClass,
+    printJavaCallStack: printJavaCallStack,
+    findStrInMap: findStrInMap,
+    
+    // 高级追踪功能（基于 r0tracer）
+    bypassTracerPidDetection: typeof bypassTracerPidDetection !== 'undefined' ? bypassTracerPidDetection : function() { 
+        LOG("bypassTracerPidDetection 需要高级追踪工具", { c: Color.Yellow }); 
+    },
+    inspectObjectFields: typeof inspectObjectFields !== 'undefined' ? inspectObjectFields : function() { 
+        LOG("inspectObjectFields 需要高级追踪工具", { c: Color.Yellow }); 
+    },
+    advancedMethodTracing: typeof advancedMethodTracing !== 'undefined' ? advancedMethodTracing : function() { 
+        LOG("advancedMethodTracing 需要高级追踪工具", { c: Color.Yellow }); 
+    },
+    batchHookWithFilters: typeof batchHookWithFilters !== 'undefined' ? batchHookWithFilters : function() { 
+        LOG("batchHookWithFilters 需要高级追踪工具", { c: Color.Yellow }); 
+    },
+    hookAllApplicationClasses: typeof hookAllApplicationClasses !== 'undefined' ? hookAllApplicationClasses : function() { 
+        LOG("hookAllApplicationClasses 需要高级追踪工具", { c: Color.Yellow }); 
+    },
+    
+    // 任务管理系统
+    jobs: typeof jobs !== 'undefined' ? jobs : function() { 
+        LOG("jobs 需要任务管理系统", { c: Color.Yellow }); 
+    },
+    job: typeof job !== 'undefined' ? job : function() { 
+        LOG("job 需要任务管理系统", { c: Color.Yellow }); 
+    },
+    kill: typeof kill !== 'undefined' ? kill : function() { 
+        LOG("kill 需要任务管理系统", { c: Color.Yellow }); 
+    },
+    killall: typeof killall !== 'undefined' ? killall : function() { 
+        LOG("killall 需要任务管理系统", { c: Color.Yellow }); 
+    },
+    pause: typeof pause !== 'undefined' ? pause : function() { 
+        LOG("pause 需要任务管理系统", { c: Color.Yellow }); 
+    },
+    resume: typeof resume !== 'undefined' ? resume : function() { 
+        LOG("resume 需要任务管理系统", { c: Color.Yellow }); 
+    },
+    jobstats: typeof jobstats !== 'undefined' ? jobstats : function() { 
+        LOG("jobstats 需要任务管理系统", { c: Color.Yellow }); 
+    },
+    history: typeof history !== 'undefined' ? history : function() { 
+        LOG("history 需要任务管理系统", { c: Color.Yellow }); 
+    },
+    cleanup: typeof cleanup !== 'undefined' ? cleanup : function() { 
+        LOG("cleanup 需要任务管理系统", { c: Color.Yellow }); 
+    },
+    jobhelp: typeof jobhelp !== 'undefined' ? jobhelp : function() { 
+        LOG("jobhelp 需要任务管理系统", { c: Color.Yellow }); 
+    },
+    
+    // 带任务管理的Hook函数
+    traceMethodWithJob: typeof traceMethodWithJob !== 'undefined' ? traceMethodWithJob : function() { 
+        LOG("traceMethodWithJob 需要任务管理系统", { c: Color.Yellow }); 
+    },
+    traceClassWithJob: typeof traceClassWithJob !== 'undefined' ? traceClassWithJob : function() { 
+        LOG("traceClassWithJob 需要任务管理系统", { c: Color.Yellow }); 
+    },
+    advancedMethodTracingWithJob: typeof advancedMethodTracingWithJob !== 'undefined' ? advancedMethodTracingWithJob : function() { 
+        LOG("advancedMethodTracingWithJob 需要任务管理系统", { c: Color.Yellow }); 
+    },
+    batchHookWithJob: typeof batchHookWithJob !== 'undefined' ? batchHookWithJob : function() { 
+        LOG("batchHookWithJob 需要任务管理系统", { c: Color.Yellow }); 
+    },
+    
+    // 定位Hook函数
+    hookBase64: typeof hookBase64 !== 'undefined' ? hookBase64 : function() { 
+        LOG("hookBase64 需要定位Hook工具", { c: Color.Yellow }); 
+    },
+    hookToast: typeof hookToast !== 'undefined' ? hookToast : function() { 
+        LOG("hookToast 需要定位Hook工具", { c: Color.Yellow }); 
+    },
+    hookJSONObject: typeof hookJSONObject !== 'undefined' ? hookJSONObject : function() { 
+        LOG("hookJSONObject 需要定位Hook工具", { c: Color.Yellow }); 
+    },
+    hookHashMap: typeof hookHashMap !== 'undefined' ? hookHashMap : function() { 
+        LOG("hookHashMap 需要定位Hook工具", { c: Color.Yellow }); 
+    },
+    hookEditText: typeof hookEditText !== 'undefined' ? hookEditText : function() { 
+        LOG("hookEditText 需要定位Hook工具", { c: Color.Yellow }); 
+    },
+    hookArrayList: typeof hookArrayList !== 'undefined' ? hookArrayList : function() { 
+        LOG("hookArrayList 需要定位Hook工具", { c: Color.Yellow }); 
+    },
+    hookLoadLibrary: typeof hookLoadLibrary !== 'undefined' ? hookLoadLibrary : function() { 
+        LOG("hookLoadLibrary 需要定位Hook工具", { c: Color.Yellow }); 
+    },
+    hookNewStringUTF: typeof hookNewStringUTF !== 'undefined' ? hookNewStringUTF : function() { 
+        LOG("hookNewStringUTF 需要定位Hook工具", { c: Color.Yellow }); 
+    },
+    hookFileOperations: typeof hookFileOperations !== 'undefined' ? hookFileOperations : function() { 
+        LOG("hookFileOperations 需要定位Hook工具", { c: Color.Yellow }); 
+    },
+    hookLog: typeof hookLog !== 'undefined' ? hookLog : function() { 
+        LOG("hookLog 需要定位Hook工具", { c: Color.Yellow }); 
+    },
+    hookURL: typeof hookURL !== 'undefined' ? hookURL : function() { 
+        LOG("hookURL 需要定位Hook工具", { c: Color.Yellow }); 
+    },
+    enableAllHooks: typeof enableAllHooks !== 'undefined' ? enableAllHooks : function() { 
+        LOG("enableAllHooks 需要定位Hook工具", { c: Color.Yellow }); 
+    },
+    
+    // 智能工具
+    smartTrace: smartTrace,
+    intelligentHookDispatcher: intelligentHookDispatcher,
+    loadNativeSupport: loadNativeSupport,
+    
+    // Native Hook 函数 (如果可用)
+    nativeHookNativeFunction: typeof nativeHookNativeFunction !== 'undefined' ? nativeHookNativeFunction : function() { 
+        LOG("Native Hook 工具未加载，请运行 loadNativeSupport()"); 
+    },
+    nativeFindModules: typeof nativeFindModules !== 'undefined' ? nativeFindModules : function() { 
+        LOG("nativeFindModules 需要 Native Hook 工具", { c: Color.Yellow }); 
+    },
+    nativeFindExports: typeof nativeFindExports !== 'undefined' ? nativeFindExports : function() { 
+        LOG("nativeFindExports 需要 Native Hook 工具", { c: Color.Yellow }); 
+    },
+    nativeSearchMemory: typeof nativeSearchMemory !== 'undefined' ? nativeSearchMemory : function() { 
+        LOG("nativeSearchMemory 需要 Native Hook 工具", { c: Color.Yellow }); 
+    },
+    printNativeStack: typeof printNativeStack !== 'undefined' ? printNativeStack : function() { 
+        LOG("printNativeStack 需要 Native Hook 工具", { c: Color.Yellow }); 
+    },
+    
+    // 高级Native Hook函数
+    nativeHookDlopenFamily: typeof nativeHookDlopenFamily !== 'undefined' ? nativeHookDlopenFamily : function() { 
+        LOG("nativeHookDlopenFamily 需要 Native Hook 工具", { c: Color.Yellow }); 
+    },
+    nativeHookJNIFunctions: typeof nativeHookJNIFunctions !== 'undefined' ? nativeHookJNIFunctions : function() { 
+        LOG("nativeHookJNIFunctions 需要 Native Hook 工具", { c: Color.Yellow }); 
+    },
+    nativeHookCryptoFunctions: typeof nativeHookCryptoFunctions !== 'undefined' ? nativeHookCryptoFunctions : function() { 
+        LOG("nativeHookCryptoFunctions 需要 Native Hook 工具", { c: Color.Yellow }); 
+    },
+    nativeHookNetworkFunctions: typeof nativeHookNetworkFunctions !== 'undefined' ? nativeHookNetworkFunctions : function() { 
+        LOG("nativeHookNetworkFunctions 需要 Native Hook 工具", { c: Color.Yellow }); 
+    },
+    nativeHookAntiDebug: typeof nativeHookAntiDebug !== 'undefined' ? nativeHookAntiDebug : function() { 
+        LOG("nativeHookAntiDebug 需要 Native Hook 工具", { c: Color.Yellow }); 
+    },
+    nativeAnalyzeSO: typeof nativeAnalyzeSO !== 'undefined' ? nativeAnalyzeSO : function() { 
+        LOG("nativeAnalyzeSO 需要 Native Hook 工具", { c: Color.Yellow }); 
+    },
+    nativeEnableAllHooks: typeof nativeEnableAllHooks !== 'undefined' ? nativeEnableAllHooks : function() { 
+        LOG("nativeEnableAllHooks 需要 Native Hook 工具", { c: Color.Yellow }); 
+    },
+    nativeQuickHookCrypto: typeof nativeQuickHookCrypto !== 'undefined' ? nativeQuickHookCrypto : function() { 
+        LOG("nativeQuickHookCrypto 需要 Native Hook 工具", { c: Color.Yellow }); 
+    },
+    nativeQuickHookNetwork: typeof nativeQuickHookNetwork !== 'undefined' ? nativeQuickHookNetwork : function() { 
+        LOG("nativeQuickHookNetwork 需要 Native Hook 工具", { c: Color.Yellow }); 
+    },
+    nativeQuickAnalyzeApp: typeof nativeQuickAnalyzeApp !== 'undefined' ? nativeQuickAnalyzeApp : function() { 
+        LOG("nativeQuickAnalyzeApp 需要 Native Hook 工具", { c: Color.Yellow }); 
+    },
+    
+    // 工具函数
+    uniqBy: uniqBy,
+    bytesToString: bytesToString,
+    LOG: LOG,
+    Color: Color
+};
+
+// 自动包装函数，添加任务管理
+if (typeof HookJobManager !== 'undefined') {
+    LOG("\\n🤖 启用自动任务追踪...", { c: Color.Blue });
+    
+    // 包装剩余的定位Hook函数（已修改的不需要重复包装）
+    var remainingHookFunctions = [
+        'hookJSONObject', 'hookHashMap', 'hookEditText', 'hookArrayList', 
+        'hookLoadLibrary', 'hookNewStringUTF', 'hookFileOperations', 
+        'hookURL', 'enableAllHooks'
+    ];
+    
+    remainingHookFunctions.forEach(function(funcName) {
+        if (typeof global[funcName] === 'function') {
+            var originalFunc = global[funcName];
+            global[funcName] = function() {
+                var args = Array.prototype.slice.call(arguments);
+                var taskId = HookJobManager.autoRegisterHook(funcName, args);
+                try {
+                    var result = originalFunc.apply(this, args);
+                    return taskId;
+                } catch (e) {
+                    if (taskId) {
+                        var job = HookJobManager.getJob(taskId);
+                        if (job) job.updateStatus('failed', e);
+                    }
+                    throw e;
+                }
+            };
+        }
+    });
+    
+    // 包装Java Hook函数
+    var javaHookFunctions = ['traceMethod', 'findClasses', 'enumAllClasses', 'describeJavaClass'];
+    javaHookFunctions.forEach(function(funcName) {
+        if (typeof global[funcName] === 'function') {
+            var originalFunc = global[funcName];
+            global[funcName] = function() {
+                var args = Array.prototype.slice.call(arguments);
+                var taskId = HookJobManager.autoRegisterHook(funcName, args);
+                try {
+                    var result = originalFunc.apply(this, args);
+                    return taskId;
+                } catch (e) {
+                    if (taskId) {
+                        var job = HookJobManager.getJob(taskId);
+                        if (job) job.updateStatus('failed', e);
+                    }
+                    throw e;
+                }
+            };
+        }
+    });
+    
+    LOG("✅ 自动任务追踪已启用", { c: Color.Green });
+} else {
+    LOG("⚠️  任务管理器未加载，跳过自动任务追踪", { c: Color.Yellow });
+}
+
+LOG("\\n🚀 fridac 已就绪!", { c: Color.Green });
+LOG("💡 输入 help() 查看可用函数", { c: Color.Cyan });
+LOG("💡 输入 q 或 exit 退出程序\\n", { c: Color.Cyan });
+
+}); // End of Java.perform
+'''
+    
+    return js_content
+
+class FridacSession:
+    """Frida session management class"""
+    
+    def __init__(self):
+        self.session = None
+        self.script = None
+        self.device = None
+        self.target_process = None
+        self.running = False
+        
+    def on_message(self, message, data):
+        """Handle messages from Frida script with enhanced logging"""
+        if message['type'] == 'send':
+            payload = message['payload']
+            if RICH_AVAILABLE:
+                # Try to format JavaScript output nicely
+                if isinstance(payload, str) and (payload.startswith('{') or payload.startswith('[')):
+                    try:
+                        import json
+                        formatted = json.loads(payload)
+                        console.print(formatted)
+                    except:
+                        console.print(payload)
+                else:
+                    console.print(payload)
+            else:
+                print(payload)
+        elif message['type'] == 'error':
+            log_error("脚本错误: {}".format(message['description']))
+    
+    def connect_to_app(self, app_name, spawn_mode=False):
+        """Connect to target app"""
+        try:
+            # Get USB device with progress indicator
+            if RICH_AVAILABLE:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    console=console
+                ) as progress:
+                    task = progress.add_task("正在连接设备...", total=None)
+                    self.device = frida.get_usb_device()
+                    progress.update(task, description="✅ 设备连接成功")
+            else:
+                log_info("正在连接设备...")
+                self.device = frida.get_usb_device()
+            
+            log_success("连接到设备: {}".format(self.device))
+            
+            if spawn_mode:
+                # Spawn mode
+                log_info("启动应用: {}".format(app_name))
+                pid = self.device.spawn([app_name])
+                self.target_process = self.device.attach(pid)
+                self.device.resume(pid)
+                log_success("应用已启动 (PID: {})".format(pid))
+            else:
+                # Attach mode  
+                log_info("连接到应用: {}".format(app_name))
+                self.target_process = self.device.attach(app_name)
+                log_success("已连接到运行中的应用")
+            
+            # Load and create script
+            log_info("正在加载 Frida 脚本...")
+            js_script = create_frida_script()
+            if not js_script:
+                return False
+                
+            self.script = self.target_process.create_script(js_script)
+            self.script.on('message', self.on_message)
+            self.script.load()
+            
+            self.running = True
+            log_success("Frida 脚本已加载，会话建立成功!")
+            return True
+            
+        except frida.ProcessNotFoundError:
+            log_error("找不到进程: {}".format(app_name))
+            return False
+        except frida.ServerNotRunningError:
+            log_error("Frida 服务器未运行，请确保设备已连接并启动 frida-server")
+            return False
+        except Exception as e:
+            log_error("连接失败: {}".format(e))
+            return False
+    
+    def execute_js(self, js_code):
+        """Execute JavaScript code with enhanced error handling"""
+        if not self.script:
+            log_error("没有活动的脚本会话")
+            return
+            
+        try:
+            # Handle special exit commands
+            if js_code.strip().lower() in ['q', 'quit', 'exit']:
+                self.running = False
+                return
+            
+            # Show what we're executing for complex commands
+            if len(js_code) > 50 or '\n' in js_code:
+                log_debug("执行 JavaScript: {}...".format(js_code[:50]))
+            
+            # Execute the JavaScript code through RPC
+            result = self.script.exports.eval(js_code)
+            
+        except Exception as e:
+            log_error("执行错误: {}".format(e))
+    
+    def disconnect(self):
+        """Disconnect from target with graceful cleanup"""
+        self.running = False
+        if self.script:
+            try:
+                self.script.unload()
+                log_debug("脚本已卸载")
+            except:
+                pass
+        if self.target_process:
+            try:
+                self.target_process.detach()
+                log_debug("进程已分离")
+            except:
+                pass
+        log_success("已断开连接")
+
+def run_frida_session(spawn_mode=False, target_package=None, force_show_apps=False):
+    """Run Frida session with interactive shell"""
+    
+    if force_show_apps or not target_package:
+        # Find target app interactively
+        target_app = find_target_app()
+        if not target_app:
+            return
+    else:
+        # Use specified package
+        target_app = target_package
+        log_info("使用指定的包名: {}".format(target_app))
+    
+    session = FridacSession()
+    
+    # Setup signal handler for clean exit
+    def signal_handler(sig, frame):
+        log_info("正在退出...")
+        session.disconnect()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    # Connect to app
+    if not session.connect_to_app(target_app, spawn_mode):
+        return
+    
+    # Interactive loop
+    setup_history()
+    
+    # Show beautiful interactive mode banner
+    if RICH_AVAILABLE:
+        console.print()
+        
+        # Create interactive mode panel
+        interactive_panel = Panel(
+            "[bold green]🎯 交互模式已启用[/bold green]\n\n"
+            "• 使用 [cyan]Tab[/cyan] 键自动补全函数名和类名\n"
+            "• 直接调用 JS 函数进行 Hook 操作\n"
+            "• 输入 [yellow]help()[/yellow] 查看所有可用函数\n"
+            "• 输入 [red]q[/red] 或 [red]exit[/red] 退出程序",
+            title="🚀 fridac 交互式 Shell",
+            border_style="green",
+            padding=(1, 2)
+        )
+        # console.print(interactive_panel)
+        
+        # Show examples
+        example_table = Table(title="📝 常用命令示例", box=ROUNDED, show_header=True, header_style="bold blue")
+        example_table.add_column("功能说明", style="green", width=35)
+        example_table.add_column("使用示例", style="cyan", width=55)
+        
+        examples = [
+            ("🏛️ 跟踪类的所有方法", "[cyan]traceClass[/cyan]('com.example.MainActivity')"),
+            ("🏛️ 跟踪类的所有方法（新函数）", "[cyan]hookAllMethodsInJavaClass[/cyan]('com.example.MainActivity')"),
+            ("🎯 跟踪特定方法", "[cyan]traceMethod[/cyan]('com.example.Class.method')"),
+            ("🎯 跟踪特定方法（新函数）", "[cyan]hookJavaMethodWithTracing[/cyan]('com.example.Class.method', true)"),
+            ("🔥 高级方法追踪（字段+彩色）", "[cyan]advancedMethodTracing[/cyan]('com.example.Class.method', true, true)"),
+            ("📦 批量Hook（黑白名单）", "[cyan]batchHookWithFilters[/cyan]('com.example', 'test', null)"),
+            ("🚀 Hook所有应用类", "[cyan]hookAllApplicationClasses[/cyan](true)"),
+            ("🔒 绕过反调试检测", "[cyan]bypassTracerPidDetection[/cyan]()"),
+            ("📋 可管理的方法Hook", "var id = [cyan]traceMethodWithJob[/cyan]('com.example.Class.method', true)"),
+            ("📊 查看所有活跃任务", "[cyan]jobs[/cyan]()"),
+            ("❌ 取消指定任务", "[cyan]kill[/cyan](id)"),
+            ("❓ 任务管理帮助", "[cyan]jobhelp[/cyan]()"),
+            ("🔍 查找匹配的类并显示方法", "[cyan]findClasses[/cyan]('MainActivity', true)"),
+            ("📋 枚举包下的所有类", "[cyan]enumAllClasses[/cyan]('com.example')"),
+            ("📚 显示完整帮助信息", "[cyan]help[/cyan]()")
+        ]
+        
+        for desc, cmd in examples:
+            example_table.add_row(desc, cmd)
+        
+        # console.print()
+        # console.print(example_table)
+        # console.print()
+        
+        # Show completion helper
+        completer = FridacCompleter()
+        completer.show_completion_help()
+        
+    else:
+        print("\n" + "="*60)
+        print("🎯 进入交互模式 - 智能补全已启用")
+        print("💡 使用 Tab 键自动补全函数名和类名")
+        print("📝 可以直接调用 JS 函数，例如:")
+        print("   traceClass('com.example.MainActivity')")
+        print("   hookAllMethodsInJavaClass('com.example.MainActivity')  # 新函数名")
+        print("   traceMethod('com.example.Class.method')")
+        print("   hookJavaMethodWithTracing('com.example.Class.method', true)  # 新函数名")
+        print("   advancedMethodTracing('com.example.Class.method', true, true)  # 高级追踪")
+        print("   batchHookWithFilters('com.example', 'test', null)  # 批量Hook")
+        print("   bypassTracerPidDetection()  # 绕过反调试")
+        print("   var id = traceMethodWithJob('com.example.Class.method', true)  # 可管理Hook")
+        print("   jobs()  # 查看任务")
+        print("   kill(id)  # 取消任务")
+        print("   findClasses('MainActivity', true)")
+        print("📚 输入 help() 查看所有可用函数")
+        print("🚪 输入 q 或 exit 退出")
+        print("="*60 + "\n")
+    
+    while session.running:
+        try:
+            # Get user input with rich prompt if available
+            if RICH_AVAILABLE:
+                user_input = Prompt.ask(
+                    "[bold cyan]fridac[/bold cyan][dim]>[/dim]",
+                    default="",
+                    show_default=False
+                ).strip()
+            else:
+                user_input = input("fridac> ").strip()
+            
+            if not user_input:
+                continue
+                
+            # Handle exit commands
+            if user_input.lower() in ['q', 'quit', 'exit']:
+                log_info("正在退出...")
+                break
+            
+            # Execute JavaScript code
+            session.execute_js(user_input)
+            
+        except KeyboardInterrupt:
+            log_info("正在退出...")
+            break
+        except EOFError:
+            log_info("正在退出...")
+            break
+    
+    # Clean up
+    session.disconnect()
+
+def main():
+    """Main function"""
+    parser = argparse.ArgumentParser(
+        description='fridac - Enhanced Frida CLI tool with interactive JavaScript shell',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  fridac                                    # Auto-attach to frontmost app (smart mode)
+  fridac -a                                 # Show apps list for selection
+  fridac -f com.example.app                 # Spawn app and attach
+  fridac -p com.example.app                 # Attach to specific package
+  fridac --spawn com.example.app            # Spawn app and attach (same as -f)
+        '''
+    )
+    
+    parser.add_argument('-f', '--package', type=str,
+                       help='Specify package name to spawn and attach')
+    
+    parser.add_argument('-p', '--attach-package', type=str,
+                       help='Specify package name to attach (without spawning)')
+    
+    parser.add_argument('-a', '--apps', action='store_true',
+                       help='Show apps list for selection (original behavior)')
+    
+    parser.add_argument('--spawn', type=str,
+                       help='Spawn mode with package name (same as -f)')
+    
+    parser.add_argument('--version', action='version', 
+                       version='fridac 1.0 (Frida {})'.format(get_frida_version()))
+    
+    args = parser.parse_args()
+    
+    # Determine target package and mode
+    target_package = None
+    spawn_mode = False
+    force_show_apps = False
+    
+    if args.package:  # -f com.example.app
+        target_package = args.package
+        spawn_mode = True
+    elif args.spawn:  # --spawn com.example.app
+        target_package = args.spawn
+        spawn_mode = True
+    elif args.attach_package:  # -p com.example.app
+        target_package = args.attach_package
+        spawn_mode = False
+    elif args.apps:  # -a (show apps list)
+        force_show_apps = True
+    else:
+        # Default behavior: try to attach to frontmost app
+        frontmost_id, frontmost_name = get_frontmost_app()
+        if frontmost_id:
+            target_package = frontmost_id
+            spawn_mode = False
+            log_success("检测到前台应用: {} ({})".format(frontmost_name, frontmost_id))
+            log_info("将自动连接到此应用，如需选择其他应用请使用 'fridac -a'")
+        else:
+            log_info("没有检测到前台应用，显示应用列表...")
+            force_show_apps = True
+    
+    # Detect and display Python environment info
+    env_info = detect_python_environment()
+    
+    # Show beautiful banner and environment info
+    show_banner()
+    
+    if RICH_AVAILABLE:
+        # Create environment info table
+        env_table = Table(title="🔧 环境信息", box=SIMPLE, show_header=True, header_style="bold blue")
+        env_table.add_column("组件", style="cyan", min_width=10)
+        env_table.add_column("版本/路径", style="green", min_width=30)
+        env_table.add_column("状态", style="yellow", min_width=15)
+        
+        # Python info
+        python_status = "✅ 正常" if env_info['version'] != 'unknown' else "❌ 异常"
+        env_table.add_row("Python", f"{env_info['version']} ({env_info['executable']})", python_status)
+        
+        # Pyenv info
+        if env_info.get('using_pyenv') and 'pyenv_version' in env_info:
+            env_table.add_row("pyenv", env_info['pyenv_version'], "✅ 激活")
+        else:
+            env_table.add_row("pyenv", "系统 Python", "⚪ 未使用")
+        
+        # Frida info
+        frida_status = "✅ 可用" if env_info['frida_version'] != 'unknown' else "❌ 未安装"
+        env_table.add_row("Frida", env_info['frida_version'], frida_status)
+        
+        console.print()
+        console.print(env_table)
+        console.print()
+    else:
+        log_info("Python: {} ({})".format(env_info['version'], env_info['executable']))
+        if env_info.get('using_pyenv') and 'pyenv_version' in env_info:
+            log_info("pyenv: {}".format(env_info['pyenv_version']))
+        elif not env_info.get('using_pyenv'):
+            log_info("环境: 系统 Python (未使用 pyenv)")
+        log_info("Frida: {}".format(env_info['frida_version']))
+    
+    # # Validate Python-Frida compatibility
+    # python_version = env_info['version']
+    # frida_version = env_info['frida_version']
+    
+    # if python_version.startswith('3.6') and '14.' in frida_version:
+    #     print("✅ Python 3.6.x + Frida 14.x - 配置正确")
+    # elif python_version.startswith('3.8') and '16.' in frida_version:
+    #     print("✅ Python 3.8.x + Frida 16.x - 配置正确")
+    # else:
+    #     print("⚠️  当前配置: Python {} + Frida {}".format(python_version, frida_version))
+    #     print("💡 建议配置: Python 3.6.8 + Frida 14.x 或 Python 3.8.2 + Frida 16.x")
+    
+    try:
+        run_frida_session(spawn_mode=spawn_mode, target_package=target_package, force_show_apps=force_show_apps)
+    except KeyboardInterrupt:
+        log_info("程序被用户中断")
+    except Exception as e:
+        log_error("运行出错: {}".format(e))
+        if not RICH_AVAILABLE:
+            log_warning("建议安装 rich 获得更好的用户体验: pip install rich")
+
+if __name__ == '__main__':
+    main()

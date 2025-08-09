@@ -1,0 +1,108 @@
+---
+description: Frida JavaScript全局函数导出规范和常见问题
+globs: frida_*.js
+---
+
+# Frida JavaScript 全局导出规范
+
+## 导出机制差异
+
+### Node.js vs Frida 环境
+```javascript
+// ❌ 仅Node.js环境有效
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { functionName: functionName };
+}
+
+// ✅ Frida环境必需
+global.functionName = functionName;
+
+// ✅ 完整兼容模式
+global.functionName = functionName;  // Frida环境
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { functionName: functionName };  // Node.js环境
+}
+```
+
+## 常见导出错误
+
+### 1. 忘记Frida全局导出
+**症状**: RPC导出显示`functionName 需要XXX系统`
+**原因**: 函数只有Node.js导出，没有`global.functionName`
+**解决**: 添加全局导出
+
+### 2. 函数未定义检查
+```javascript
+// ✅ 正确的RPC导出模式
+rpc.exports = {
+    functionName: typeof functionName !== 'undefined' ? functionName : function() { 
+        LOG("functionName 需要XXX系统", { c: Color.Yellow }); 
+    }
+};
+```
+
+### 3. 加载顺序依赖
+**确保加载顺序**:
+1. [frida_job_manager.js](mdc:frida_job_manager.js) - 定义HookJobManager
+2. [frida_job_commands.js](mdc:frida_job_commands.js) - 定义jobs、kill等命令
+3. [fridac_core/script_manager.py](mdc:fridac_core/script_manager.py) - RPC导出
+
+## 标准导出模板
+
+### 单文件导出
+```javascript
+// 在文件末尾统一导出
+global.functionName1 = functionName1;
+global.functionName2 = functionName2;
+global.functionName3 = functionName3;
+
+// 可选：Node.js兼容
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        functionName1: functionName1,
+        functionName2: functionName2,
+        functionName3: functionName3
+    };
+}
+```
+
+### 任务管理命令导出
+```javascript
+// [frida_job_commands.js](mdc:frida_job_commands.js)标准模式
+global.jobs = jobs;
+global.job = job;
+global.kill = kill;
+global.killall = killall;
+global.pause = pause;
+global.resume = resume;
+
+// 快捷命令
+global.j = jobs;
+global.k = kill;
+global.ka = killall;
+```
+
+## 调试检查清单
+
+### 1. 确认全局导出
+```javascript
+// 检查函数是否正确导出
+LOG("函数检查 - jobs: " + (typeof jobs !== 'undefined' ? "✅" : "❌"), { c: Color.Blue });
+```
+
+### 2. 验证RPC可用性
+```javascript
+// 在interactive shell中测试
+fridac> typeof jobs
+"function"  // ✅ 正确
+
+fridac> typeof jobs
+"undefined"  // ❌ 导出失败
+```
+
+### 3. 文件加载确认
+确保在[fridac_core/script_manager.py](mdc:fridac_core/script_manager.py)中正确加载:
+```python
+js_content += _load_job_manager()     # 先加载管理器
+js_content += _load_job_commands()    # 再加载命令
+```

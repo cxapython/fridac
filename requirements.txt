@@ -1,0 +1,28 @@
+# fridac - Enhanced Frida CLI Tool Requirements
+# 最低支持 Python 3.6.8
+
+# Frida 核心
+frida>=14.0.0
+
+# Rich - 美化终端输出 (Python 3.6.1+)
+rich>=10.0.0
+
+# 标准库依赖 (Python 3.6.8 内置)
+# - readline
+# - argparse
+# - subprocess
+# - threading
+# - signal
+# - datetime
+# - queue
+# - atexit
+# - json
+
+# ====== 文件说明 ======
+# fridac                    - 主程序，增强的Frida CLI工具
+# frida_common.js          - Java Hook 基础工具类
+# frida_native_common.js   - Native Hook 工具类
+# frida_location_hooks.js  - 常用定位Hook工具集（新增）
+# requirements.txt         - 依赖文件
+# INSTALL.md              - 安装说明
+

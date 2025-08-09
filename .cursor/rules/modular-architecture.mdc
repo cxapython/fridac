@@ -1,0 +1,237 @@
+---
+description: fridacli模块化架构设计和开发指南
+---
+
+# fridacli 模块化架构指南
+
+## 架构概览
+
+fridacli 已重构为模块化架构，主程序入口为 [fridac_new](mdc:fridac_new)，核心功能拆分为专业模块。
+
+### 核心模块结构
+
+```
+fridac_core/
+├── __init__.py              # 包初始化和版本信息
+├── logger.py                # 日志系统和Rich UI支持
+├── completer.py             # 智能补全和函数帮助
+├── environment.py           # 环境检测和应用管理
+├── script_manager.py        # JavaScript脚本加载和管理
+└── session.py               # Frida会话管理和交互
+```
+
+## 模块职责分工
+
+### [logger.py](mdc:fridac_core/logger.py) - 日志系统
+**职责**：统一的日志输出、Rich UI支持、横幅显示
+```python
+# 提供的功能
+log_info(), log_success(), log_warning(), log_error(), log_debug()
+show_banner()
+get_console(), is_rich_available()
+```
+
+**开发规范**：
+- 所有日志输出必须通过此模块
+- 支持Rich和基础模式的优雅降级
+- 日志格式统一，包含时间戳和emoji
+
+### [completer.py](mdc:fridac_core/completer.py) - 智能补全
+**职责**：Tab补全、函数帮助、命令建议
+```python
+# 核心类
+FridacCompleter:
+    - complete() # 补全逻辑
+    - show_completion_help() # 帮助显示
+    - functions # 函数字典
+    - common_patterns # 常用模式
+```
+
+**开发规范**：
+- 新增Hook函数必须在functions字典中注册
+- 提供描述和使用示例
+- 支持类名模式匹配
+
+### [environment.py](mdc:fridac_core/environment.py) - 环境管理
+**职责**：Python环境检测、Frida版本检测、设备连接、应用选择
+```python
+# 主要函数
+detect_python_environment() # 环境检测
+get_frontmost_app() # 前台应用
+find_target_app() # 应用选择
+show_environment_info() # 环境信息显示
+```
+
+**开发规范**：
+- 环境检测必须支持多种Python环境
+- 应用选择支持Rich和基础两种UI
+- 错误处理要提供有用的诊断信息
+
+### [script_manager.py](mdc:fridac_core/script_manager.py) - 脚本管理
+**职责**：JavaScript脚本加载、模块集成、RPC包装
+```python
+# 核心功能
+create_frida_script() # 创建完整脚本
+_load_native_hooks() # 加载Native工具
+_load_location_hooks() # 加载定位工具
+_wrap_with_java_perform() # Java.perform包装
+```
+
+**开发规范**：
+- 支持多路径脚本查找
+- 模块化加载JavaScript工具集
+- 自动包装器集成任务管理
+
+### [session.py](mdc:fridac_core/session.py) - 会话管理
+**职责**：Frida会话创建、消息处理、交互式shell
+```python
+# 核心类
+FridacSession:
+    - connect_to_app() # 连接应用
+    - execute_js() # 执行JavaScript
+    - disconnect() # 断开连接
+
+# 工具函数
+setup_history() # 历史记录
+run_interactive_session() # 交互循环
+```
+
+**开发规范**：
+- 会话管理必须包含完整的错误处理
+- 支持spawn和attach两种模式
+- 交互界面要优雅降级
+
+## 开发工作流
+
+### 1. 新功能开发
+```python
+# 1. 确定功能归属模块
+# 2. 在对应模块中实现功能
+# 3. 更新模块接口
+# 4. 更新主程序引用
+# 5. 测试完整流程
+```
+
+### 2. Bug修复
+```python
+# 1. 定位问题所在模块
+# 2. 在模块内修复问题
+# 3. 验证不影响其他模块
+# 4. 运行集成测试
+```
+
+### 3. 模块扩展
+```python
+# 可以添加新模块：
+fridac_core/
+├── plugins/           # 插件系统
+├── config.py         # 配置管理
+├── templates.py      # Hook模板
+└── utils.py          # 工具函数
+```
+
+## 模块间通信规范
+
+### 导入规范
+```python
+# 正确的模块导入
+from fridac_core.logger import log_info, log_success
+from fridac_core.environment import detect_python_environment
+from fridac_core.session import FridacSession
+
+# 避免循环导入
+# 避免 from fridac_core import *
+```
+
+### 数据传递
+```python
+# 使用明确的函数参数
+def process_app_info(app_name, app_id, spawn_mode=False):
+    pass
+
+# 避免全局变量依赖
+# 使用返回值传递数据
+```
+
+### 错误处理
+```python
+# 每个模块处理自己的异常
+try:
+    result = module_function()
+except ModuleSpecificError as e:
+    log_error(f"模块操作失败: {e}")
+    return None
+```
+
+## 测试策略
+
+### 单元测试
+```python
+# 每个模块可独立测试
+import unittest
+from fridac_core.environment import detect_python_environment
+
+class TestEnvironment(unittest.TestCase):
+    def test_python_detection(self):
+        info = detect_python_environment()
+        self.assertIn('version', info)
+```
+
+### 集成测试
+```python
+# 测试模块间协作
+def test_full_workflow():
+    session = FridacSession()
+    # 测试完整流程
+```
+
+### 功能测试
+```bash
+# 对比新旧版本功能
+./fridac_new -a  # 新版本
+./fridac -a      # 原版本对比
+```
+
+## 迁移指南
+
+### 当前状态
+- [fridac_new](mdc:fridac_new) - 新的模块化版本
+- [fridac](mdc:fridac) - 原版本（备份）
+- 功能完全一致，架构更清晰
+
+### 完成迁移步骤
+1. **验证功能** - 确保新版本功能完整
+2. **备份原版** - 重命名为 fridac_legacy
+3. **替换主程序** - fridac_new → fridac
+4. **更新文档** - 修改相关说明
+5. **清理代码** - 移除不需要的文件
+
+### 向后兼容保证
+- 命令行参数完全一致
+- 所有Hook函数行为不变
+- 配置文件位置不变
+- 用户体验保持一致
+
+## 最佳实践
+
+### 代码组织
+- 一个模块一个职责
+- 清晰的模块接口
+- 最小化模块间依赖
+
+### 功能扩展
+- 优先在现有模块中扩展
+- 新功能考虑是否需要新模块
+- 保持接口的稳定性
+
+### 错误处理
+- 模块内部处理细节错误
+- 向上层报告关键错误
+- 提供有用的错误信息
+
+### 性能考虑
+- 按需加载功能模块
+- 避免重复初始化
+- 缓存重复计算结果
+
+这个模块化架构为 fridacli 的未来发展提供了坚实的基础！

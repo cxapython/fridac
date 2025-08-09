@@ -1,0 +1,73 @@
+---
+globs: *.js
+description: Frida JavaScript开发规范和最佳实践
+---
+
+# Frida JavaScript 开发规范
+
+## 命名规范
+
+### 函数命名
+- **Java层函数**: 无前缀，使用驼峰命名，如 `traceClass`, `findClasses`
+- **Native层函数**: 必须使用`native`前缀，如 `nativeHookNativeFunction`, `nativeFindModules`
+- **定位Hook函数**: 使用`hook`前缀，如 `hookBase64`, `hookToast`
+
+### 参数规范
+- `showStack`: 统一使用整数 `1`(显示调用栈) 或 `0`(不显示)，默认为`0`
+- `pattern`: 正则表达式模式，用于搜索和匹配
+- `options`: 对象类型，包含可选配置参数
+
+## 代码结构
+
+### 函数定义模板
+```javascript
+function nativeFunctionName(param1, showStack) {
+    showStack = showStack || 0;
+    var needStack = showStack === 1;
+    
+    try {
+        // 功能实现
+        if (needStack) {
+            printNativeStack();
+        }
+        LOG("操作完成", { c: Color.Green });
+    } catch (e) {
+        LOG("操作失败: " + e.message, { c: Color.Red });
+    }
+}
+```
+
+### 导出规范
+在文件末尾统一导出所有函数：
+```javascript
+// ============= 导出函数 =============
+global.functionName = functionName;
+```
+
+## Frida特定规范
+
+### Java Hook最佳实践
+- 使用 `Java.perform()` 包装所有Java操作
+- 使用 `Java.use()` 获取类引用
+- 合理使用 `overload()` 处理方法重载
+- 实现implementation时要调用原始方法
+
+### Native Hook最佳实践  
+- 使用 `Module.findExportByName()` 查找函数
+- 使用 `Interceptor.attach()` 进行Hook
+- 正确处理函数参数和返回值类型
+- 注意内存地址和指针操作
+
+### 错误处理
+- 所有Hook操作必须包含try-catch
+- 使用LOG函数记录错误信息
+- 提供有意义的错误提示
+
+### 日志规范
+使用项目统一的LOG函数和颜色：
+```javascript
+LOG("信息消息", { c: Color.Blue });
+LOG("成功消息", { c: Color.Green });
+LOG("警告消息", { c: Color.Yellow });
+LOG("错误消息", { c: Color.Red });
+```

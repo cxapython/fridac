@@ -1,0 +1,124 @@
+---
+description: fridacli开发工作流程和最佳实践
+---
+
+# fridacli 开发工作流程
+
+## 文件修改工作流
+
+### 1. JavaScript Hook函数开发
+
+当添加新的Hook函数时，需要同步更新多个文件：
+
+1. **在对应JS文件中添加函数**:
+   - Java Hook → [frida_common.js](mdc:frida_common.js)
+   - Native Hook → [frida_native_common.js](mdc:frida_native_common.js) (函数名必须以`native`开头)
+   - 定位Hook → [frida_location_hooks.js](mdc:frida_location_hooks.js)
+
+2. **更新全局导出**: 在JS文件末尾添加 `global.functionName = functionName;`
+
+3. **更新fridac补全**: 在 [fridac](mdc:fridac) 的 `FridacCompleter.functions` 字典中添加条目
+
+4. **更新RPC导出**: 在 [fridac](mdc:fridac) 的 `rpc.exports` 中添加函数导出
+
+5. **更新help()函数**: 在 [fridac](mdc:fridac) 的JavaScript help()函数中添加帮助信息
+
+### 2. 函数重命名工作流
+
+当重命名函数时（特别是Native函数添加`native`前缀）：
+
+1. **更新JS文件**: 修改函数定义和内部调用
+2. **更新全局导出**: 修改global导出语句  
+3. **更新fridac补全**: 修改FridacCompleter中的函数名
+4. **更新RPC导出**: 修改rpc.exports中的函数名
+5. **更新help()**: 修改help()函数中的函数名和示例
+
+## 测试工作流
+
+### 功能测试
+```bash
+# 测试版本显示
+python3 fridac --version
+
+# 测试基本功能
+python3 fridac -h
+
+# 测试JS语法
+node -c frida_common.js
+node -c frida_native_common.js  
+node -c frida_location_hooks.js
+```
+
+### 交互测试
+```bash
+# 启动交互模式
+python3 fridac
+
+# 测试补全功能
+# 在交互模式中按Tab键测试
+
+# 测试help功能
+fridac> help()
+```
+
+## 版本管理
+
+### 兼容性检查
+- Python 3.6.8+ 兼容性
+- Frida 14.0.0+ 兼容性
+- Rich库可选依赖检查
+
+### 依赖更新
+更新 [requirements.txt](mdc:requirements.txt) 时：
+1. 验证最低版本要求
+2. 测试向下兼容性
+3. 更新安装文档
+
+## 文档更新工作流
+
+### README更新
+更新 [README.md](mdc:README.md) 时确保：
+1. 函数表格反映最新功能
+2. 使用示例准确有效
+3. 安装说明清晰完整
+4. 分类正确（Java/Native/定位Hook）
+
+### 注释规范
+- JavaScript文件使用中文注释
+- Python文件使用中文注释
+- 函数头部包含用途说明
+- 参数说明清晰完整
+
+## 发布前检查清单
+
+### 代码检查
+- [ ] 所有JS文件语法正确
+- [ ] Python兼容性验证
+- [ ] 函数导出完整
+- [ ] RPC导出正确
+
+### 功能检查  
+- [ ] 基本CLI功能正常
+- [ ] 交互补全工作
+- [ ] help()显示正确
+- [ ] 错误处理完善
+
+### 文档检查
+- [ ] README反映最新功能
+- [ ] 示例代码可执行
+- [ ] 安装说明准确
+- [ ] 函数分类清晰
+
+## 常见问题处理
+
+### JavaScript语法错误
+使用 `node -c filename.js` 检查语法
+
+### Python导入错误
+检查文件路径和import语句
+
+### 函数未定义错误
+确保在rpc.exports中正确导出
+
+### 补全不工作
+检查FridacCompleter中的函数定义

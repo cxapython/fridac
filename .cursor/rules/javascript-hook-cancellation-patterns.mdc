@@ -1,0 +1,120 @@
+---
+description: JavaScript Hook取消和生命周期管理最佳实践
+globs: *.js
+---
+
+# JavaScript Hook 取消和生命周期管理
+
+## Hook类型与取消机制
+
+### Java Hook (Frida Java API)
+```javascript
+// ❌ 无法完全取消的模式
+Java.use("className").methodName.implementation = function() {
+    // 这种Hook无法通过detach()移除
+};
+
+// ✅ 可管理的模式
+function hookWithTaskManagement() {
+    var taskId = HookJobManager.autoRegisterHook('functionName', args);
+    
+    Java.use("className").methodName.implementation = function() {
+        // 检查任务状态
+        if (taskId && typeof HookJobManager !== 'undefined') {
+            var job = HookJobManager.getJob(taskId);
+            if (job && job.status !== 'cancelled') {
+                // 只有未取消的任务才执行逻辑
+                HookJobManager.updateAutoTaskHit(taskId, { executionTime: 1 });
+                LOG("Hook triggered", { c: Color.Green });
+            }
+        }
+        return this.methodName.apply(this, arguments);
+    };
+    
+    return taskId;
+}
+```
+
+### Native Hook (Frida Native API)
+```javascript
+// ✅ 可完全取消的模式
+function nativeHookWithCancellation() {
+    var interceptor = Interceptor.attach(targetAddress, {
+        onEnter: function(args) {
+            // Hook逻辑
+        }
+    });
+    
+    // 保存到任务的interceptors数组
+    job.interceptors.push(interceptor);
+    
+    // 可通过interceptor.detach()完全移除
+    return interceptor;
+}
+```
+
+## 任务取消实现模式
+
+### 标准取消流程
+```javascript
+HookJob.prototype.cancel = function() {
+    try {
+        // 1. 自动追踪任务特殊处理
+        if (this.options.autoTracked) {
+            LOG("⚠️  自动追踪任务已标记为取消", { c: Color.Yellow });
+            LOG("💡 注意: Java Hook无法完全移除，但不会再计入统计", { c: Color.Blue });
+            this.updateStatus(JobStatus.CANCELLED);
+            return true;
+        }
+        
+        // 2. Native Hook标准处理
+        this.interceptors.forEach(function(interceptor) {
+            if (interceptor && typeof interceptor.detach === 'function') {
+                interceptor.detach();
+            }
+        });
+        
+        this.interceptors = [];
+        this.updateStatus(JobStatus.CANCELLED);
+        return true;
+    } catch (error) {
+        this.updateStatus(JobStatus.FAILED, error);
+        return false;
+    }
+};
+```
+
+## 状态检查模式
+
+### Hook函数中的状态检查
+```javascript
+// 在Hook实现中检查任务状态
+if (taskId && typeof HookJobManager !== 'undefined') {
+    var job = HookJobManager.getJob(taskId);
+    if (job && job.status !== 'cancelled') {
+        // 只有活跃任务才执行统计和日志
+        HookJobManager.updateAutoTaskHit(taskId, { executionTime: 1 });
+        LOG("Hook活跃", { c: Color.Green });
+    }
+    // 已取消的任务静默执行，不产生输出
+}
+```
+
+## 用户体验优化
+
+### 清晰的状态反馈
+```javascript
+function kill(jobId) {
+    var job = HookJobManager.getJob(parseInt(jobId));
+    if (job && job.options.autoTracked) {
+        LOG("🎯 正在取消自动追踪任务 #" + jobId, { c: Color.Cyan });
+    }
+    return HookJobManager.killJob(parseInt(jobId));
+}
+```
+
+### 技术限制说明
+- Java Hook无法完全移除，只能状态管理
+- Native Hook可完全detach
+- 自动追踪任务通过状态检查控制行为
+- 重启应用是最彻底的Hook清理方法

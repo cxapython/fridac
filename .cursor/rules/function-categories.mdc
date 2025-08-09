@@ -1,0 +1,92 @@
+---
+description: fridacli功能分类和函数索引
+---
+
+# fridacli 功能分类指南
+
+fridacli提供三大类Hook功能，每类都有明确的用途和命名规范。
+
+## Java层Hook函数
+
+Java层函数无前缀，直接以功能命名：
+
+### 基础Java Hook
+- `traceClass()` - 跟踪类的所有方法
+- `traceMethod()` - 跟踪特定方法  
+- `findClasses()` - 查找匹配的类
+- `enumAllClasses()` - 枚举所有已加载的类
+- `describeJavaClass()` - 描述Java类详细信息
+- `printStack()` - 打印Java调用栈
+- `findTargetClassLoader()` - 查找目标类加载器
+- `findStrInMap()` - 监控HashMap查找key对应value
+
+## 定位Hook函数
+
+定位Hook函数以`hook`开头，针对特定组件：
+
+### Android组件Hook
+- `hookBase64()` - Hook Base64编码解码
+- `hookToast()` - Hook Toast显示
+- `hookJSONObject()` - Hook JSONObject操作
+- `hookHashMap()` - Hook HashMap操作
+- `hookEditText()` - Hook EditText输入
+- `hookArrayList()` - Hook ArrayList操作
+- `hookLog()` - Hook Log输出
+- `hookURL()` - Hook URL请求
+
+### 系统功能Hook  
+- `hookLoadLibrary()` - Hook动态库加载
+- `hookNewStringUTF()` - Hook JNI字符串创建
+- `hookFileOperations()` - Hook文件操作
+- `enableAllHooks()` - 启用所有定位Hook
+
+## Native层Hook函数
+
+Native层函数统一使用`native`前缀：
+
+### 基础Native Hook
+- `nativeHookNativeFunction()` - Hook Native函数
+- `nativeFindModules()` - 查找加载的模块
+- `nativeFindExports()` - 查找模块导出函数
+- `nativeFindImports()` - 查找模块导入函数
+- `nativeSearchMemory()` - 搜索内存模式
+- `printNativeStack()` - 打印Native调用栈
+
+### 高级Native Hook
+- `nativeHookDlopenFamily()` - Hook动态库加载
+- `nativeHookJNIFunctions()` - Hook JNI函数
+- `nativeHookCryptoFunctions()` - Hook加密算法
+- `nativeHookNetworkFunctions()` - Hook网络函数
+- `nativeHookAntiDebug()` - Hook反调试检测
+
+### Native分析工具
+- `nativeAnalyzeSO()` - 分析SO文件
+- `nativeEnableAllHooks()` - 启用所有Native Hook
+- `nativeQuickHookCrypto()` - 快速Hook加密
+- `nativeQuickHookNetwork()` - 快速Hook网络
+- `nativeQuickAnalyzeApp()` - 快速分析应用
+
+## 智能工具函数
+
+### 智能识别
+- `smartTrace()` - 智能识别并Hook目标（自动判断Java/Native）
+- `loadNativeSupport()` - 加载Native Hook工具
+
+### 工具函数
+- `uniqBy()` - 数组去重工具
+- `bytesToString()` - 字节转换为字符串
+- `LOG()` - 增强的日志输出
+- `Color` - 颜色常量
+- `help()` - 显示帮助信息
+
+## 参数约定
+
+### 通用参数
+- `showStack`: `1`显示调用栈，`0`不显示（默认）
+- `pattern`: 正则表达式或字符串模式
+- `options`: 可选配置对象
+
+### 特殊参数
+- `algorithm`: 加密算法类型（aes, des, md5, sha, all）
+- `soName`: SO文件名称
+- `showExports`/`showImports`: 是否显示导出/导入信息

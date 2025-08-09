@@ -1,0 +1,33 @@
+---
+alwaysApply: true
+description: fridacli项目结构和架构指南
+---
+
+# fridacli 项目结构指南
+
+fridacli是一个专业级的Frida Hook工具集，由以下核心文件组成：
+
+## 主要文件结构
+
+- **[fridac](mdc:fridac)** - 主程序文件，Python CLI工具，提供交互式环境和自动补全
+- **[frida_common.js](mdc:frida_common.js)** - Java Hook工具集，包含类跟踪、方法Hook等功能
+- **[frida_native_common.js](mdc:frida_native_common.js)** - Native Hook工具集，所有函数以`native`前缀命名
+- **[frida_location_hooks.js](mdc:frida_location_hooks.js)** - 定位Hook工具集，包含Base64、Toast、HashMap等常用组件Hook
+- **[README.md](mdc:README.md)** - 项目文档，包含完整的函数列表和使用示例
+- **[requirements.txt](mdc:requirements.txt)** - Python依赖文件
+
+## 架构设计原则
+
+1. **模块化设计**: JavaScript功能按用途分为三个文件（Java/Native/Location）
+2. **命名规范**: Native层函数统一使用`native`前缀，Java层函数无前缀
+3. **参数统一**: `showStack`参数使用`1`/`0`表示是否显示调用栈
+4. **智能补全**: fridac提供完整的Tab补全和函数帮助
+5. **向下兼容**: 支持Python 3.6.8+，优雅降级Rich库依赖
+
+## 功能分层
+
+- **基础层**: fridac CLI提供交互环境和应用连接
+- **Java层**: frida_common.js提供Java应用Hook功能  
+- **Native层**: frida_native_common.js提供SO分析和Native Hook
+- **定位层**: frida_location_hooks.js提供精准组件Hook
+- **智能层**: smartTrace等函数提供自动识别和dispatch功能

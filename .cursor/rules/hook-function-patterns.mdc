@@ -1,0 +1,182 @@
+---
+description: fridacli Hook函数开发模式和最佳实践
+---
+
+# fridacli Hook函数开发模式
+
+## Hook函数标准模板
+
+### 基础模板
+所有Hook函数都应遵循以下标准模板：
+
+```javascript
+function hookFunctionName(showStack, ...otherArgs) {
+    showStack = showStack || 0;
+    var needStack = showStack === 1;
+    
+    // 自动注册任务
+    var taskId = null;
+    if (typeof HookJobManager !== 'undefined') {
+        taskId = HookJobManager.autoRegisterHook('hookFunctionName', [showStack, ...otherArgs]);
+    }
+    
+    try {
+        // Hook实现逻辑
+        var hookTarget = Java.use("target.class.name");
+        
+        hookTarget.methodName.implementation = function() {
+            LOG("🎯 Hook触发", { c: Color.Cyan });
+            
+            // 更新任务命中统计
+            if (taskId && typeof HookJobManager !== 'undefined') {
+                HookJobManager.updateAutoTaskHit(taskId, { executionTime: 1 });
+            }
+            
+            if (needStack) {
+                printStackTrace();
+            }
+            
+            return this.methodName.apply(this, arguments);
+        };
+        
+        LOG("✅ Hook已启用" + (taskId ? " (任务ID: #" + taskId + ")" : ""), { c: Color.Green });
+        return taskId;
+    } catch (e) {
+        LOG("❌ Hook失败: " + e.message, { c: Color.Red });
+        
+        // 标记任务失败
+        if (taskId && typeof HookJobManager !== 'undefined') {
+            var job = HookJobManager.getJob(taskId);
+            if (job) {
+                job.updateStatus('failed', e);
+            }
+        }
+        return null;
+    }
+}
+```
+
+## 函数命名规范
+
+### 分类前缀
+- **Java Hook**: 无前缀，如 `traceClass`, `traceMethod`
+- **Native Hook**: `native` 前缀，如 `nativeHookNativeFunction`
+- **定位Hook**: `hook` 前缀，如 `hookBase64`, `hookToast`
+- **高级功能**: 描述性名称，如 `smartTrace`, `advancedMethodTracing`
+
+### 参数规范
+- **showStack**: 统一使用 `1`(显示调用栈) 或 `0`(不显示)
+- **target**: 目标类名、方法名或模块名
+- **options**: 对象类型的配置参数
+
+## 已实现的Hook函数模式
+
+### 定位Hook函数
+参考 [frida_location_hooks.js](mdc:frida_location_hooks.js) 中的实现：
+
+- ✅ `hookLog()` - 已集成自动任务追踪
+- ✅ `hookBase64()` - 已集成自动任务追踪  
+- ✅ `hookToast()` - 已集成自动任务追踪
+- 🔧 其他函数通过包装器自动获得任务管理
+
+### Java Hook函数
+参考 [frida_common.js](mdc:frida_common.js) 中的实现：
+
+- ✅ `hookAllMethodsInJavaClass()` / `traceClass()` - 已集成任务管理
+- 🔧 其他函数通过包装器自动获得任务管理
+
+## 输出规范
+
+### 日志颜色编码
+```javascript
+// 成功信息
+LOG("✅ Hook已启用", { c: Color.Green });
+
+// 错误信息  
+LOG("❌ Hook失败", { c: Color.Red });
+
+// Hook触发
+LOG("🎯 方法被调用", { c: Color.Cyan });
+
+// 参数信息
+LOG("  参数: " + value, { c: Color.Yellow });
+
+// 返回值
+LOG("  返回: " + result, { c: Color.Blue });
+
+// 调用栈
+LOG("📚 调用栈:", { c: Color.White });
+```
+
+### 任务ID显示
+成功创建Hook时必须显示任务ID：
+```javascript
+LOG("✅ Hook已启用 (任务ID: #" + taskId + ")", { c: Color.Green });
+```
+
+## ClassLoader处理
+
+### 标准模式
+```javascript
+var targetClass = null;
+try {
+    targetClass = Java.use(className);
+} catch (error) {
+    if(error.message.includes("ClassNotFoundException")){
+        LOG("❌ 类未在默认ClassLoader中找到，搜索其他ClassLoader...", { c: Color.Yellow });
+        var foundLoader = findTargetClassLoaderForClass(className);
+        if (foundLoader) {
+            targetClass = Java.ClassFactory.get(foundLoader).use(className);
+            LOG("🎯 成功使用自定义ClassLoader加载类", { c: Color.Green });
+        } else {
+            LOG("❌ 在所有ClassLoader中都未找到类: " + className, { c: Color.Red });
+            return null;
+        }
+    } else {
+        LOG("❌ 加载类时发生其他错误: " + error.message, { c: Color.Red });
+        return null;
+    }
+}
+```
+
+## 错误处理最佳实践
+
+### 任务状态更新
+```javascript
+catch (e) {
+    LOG("❌ Hook失败: " + e.message, { c: Color.Red });
+    
+    // 更新任务状态
+    if (taskId && typeof HookJobManager !== 'undefined') {
+        var job = HookJobManager.getJob(taskId);
+        if (job) {
+            job.updateStatus('failed', e);
+        }
+    }
+    
+    return null; // 或抛出异常
+}
+```
+
+### 渐进式错误处理
+1. **捕获具体异常** - ClassNotFoundException, SecurityException等
+2. **提供有用信息** - 建议用户可能的解决方案
+3. **优雅降级** - 部分功能失败时不影响整体
+4. **任务状态一致** - 确保任务管理器状态正确
+
+## 性能优化
+
+### Hook点选择
+- 选择关键路径上的方法
+- 避免过于频繁的方法（如getter/setter）
+- 优先Hook public方法
+
+### 内存管理
+- 及时释放不需要的引用
+- 使用 `Java.retain()` 保持必要的对象
+- 定期调用 `cleanup()` 清理任务
+
+### 批量操作
+- 使用 `batchHookWithFilters()` 进行批量Hook
+- 利用 `killall()` 批量取消任务
+- 合理使用 `pause()` 暂停噪音过大的Hook
