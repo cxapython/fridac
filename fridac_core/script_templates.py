@@ -248,8 +248,8 @@ function notifyTaskError(error) {
         show_stack = options.get('show_stack', False)
         custom_return = options.get('custom_return_value', None)
         
-        # 避免在f-string中使用反斜杠 (Python 3.6兼容性)
-        newline_char = '\n'
+        # 在JS字符串内使用转义换行符，避免插入真实换行导致语法错误
+        newline_char = '\\n'
         
         script = f'''
 // 任务ID (用于通信)
@@ -358,8 +358,8 @@ Java.perform(function() {{
         """
         show_stack = options.get('show_stack', False)
         
-        # 避免在f-string中使用反斜杠 (Python 3.6兼容性)
-        newline_char = '\n'
+        # 在JS字符串内使用转义换行符，避免插入真实换行导致语法错误
+        newline_char = '\\n'
         
         script = f'''
 // 任务ID (用于通信)
@@ -678,8 +678,8 @@ Java.perform(function() {{
         """
         show_stack = options.get('show_stack', False)
         
-        # 避免在f-string中使用反斜杠 (Python 3.6兼容性)
-        newline_char = '\n'
+        # 在JS字符串内使用转义换行符，避免插入真实换行导致语法错误
+        newline_char = '\\n'
         backslash_char = '\\'
         stack_trace_code = f"console.log(Thread.backtrace(this.context, Backtracer.ACCURATE).map(DebugSymbol.fromAddress).join('{backslash_char}n'));" if show_stack else ""
         
