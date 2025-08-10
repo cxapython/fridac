@@ -1,0 +1,45 @@
+---
+globs: fridac/**/*.js
+description: Frida JavaScript Hook开发规范和常见模式（new 系列脚本）
+---
+## Frida JavaScript Hook 规范（new 系列）
+
+### 基础原则
+- 所有 Java 操作包裹在 `Java.perform()` 中
+- 统一输出 `LOG()`，禁止 `console.log()`（见 [frida_common_new.js](mdc:fridac/frida_common_new.js)）
+- 命名：Java 层无前缀（如 `traceClass`）；Native 层使用 `native` 前缀
+
+### ClassLoader 处理
+```javascript
+function hookJavaClass(className) {
+  var hook = null;
+  try {
+    hook = Java.use(className);
+  } catch (e) {
+    if ((e.message||'').includes('ClassNotFoundException')) {
+      var loader = findTragetClassLoader(className);
+      if (loader) hook = Java.ClassFactory.get(loader).use(className);
+      else return null;
+    } else { return null; }
+  }
+  return hook;
+}
+```
+
+### 已加载类枚举
+- 优先使用 `Java.enumerateLoadedClassesSync()`，避免 callback 版 API 在部分环境出现 `onMatch` 未定义错误
+
+### 方法 Hook 模板
+```javascript
+hook[methodName].implementation = function() {
+  LOG("\n*** 进入 " + fullMethodName);
+  // 参数打印...
+  var ret = this[methodName].apply(this, arguments);
+  LOG("📤 返回值: " + ret);
+  return ret;
+}
+```
+
+### 导出规则
+- 需要在交互或 RPC 中调用的函数，必须 `global.func = func`
+- 关键函数：`smartTrace`, `traceClass`, `traceMethod`, `findClasses`, `enumAllClasses`（见 [frida_common_new.js](mdc:fridac/frida_common_new.js)）

@@ -1,0 +1,34 @@
+---
+globs: fridac/**/*.js
+description: Frida JavaScript全局导出规范与RPC导出问题排查
+---
+## Frida 全局导出与 RPC 导出
+
+### 导出差异（Node vs Frida）
+```javascript
+// ✅ Frida
+global.functionName = functionName;
+
+// ✅ 兼容（可选）
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { functionName: functionName };
+}
+```
+
+### RPC 导出兜底
+```javascript
+rpc.exports = {
+  functionName: typeof functionName !== 'undefined' ? functionName : function(){ LOG('functionName 需要相关模块'); }
+};
+```
+
+### 加载顺序与依赖
+- 保证脚本由 Python 侧按正确顺序注入（见 [script_manager.py](mdc:fridac/fridac_core/script_manager.py)）
+- 模板与组合逻辑参考 [script_templates.py](mdc:fridac/fridac_core/script_templates.py)
+
+### 快速自检
+```javascript
+LOG('检查 - smartTrace: ' + (typeof smartTrace), { c: Color.Blue });
+// 交互中:
+// fridac> typeof smartTrace  // 应为 "function"
+```

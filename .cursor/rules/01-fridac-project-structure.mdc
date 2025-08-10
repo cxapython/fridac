@@ -1,0 +1,30 @@
+---
+alwaysApply: true
+---
+## fridac 项目结构与入口指南（Always Apply）
+
+- **CLI 入口**: [fridac](mdc:fridac/fridac)
+- **核心 Python 包**: [fridac_core](mdc:fridac/fridac_core/__init__.py)
+  - 会话与交互: [session.py](mdc:fridac/fridac_core/session.py)
+  - 任务系统: [task_manager.py](mdc:fridac/fridac_core/task_manager.py)
+  - 脚本拼装: [script_manager.py](mdc:fridac/fridac_core/script_manager.py), [script_templates.py](mdc:fridac/fridac_core/script_templates.py)
+  - 环境与日志: [environment.py](mdc:fridac/fridac_core/environment.py), [logger.py](mdc:fridac/fridac_core/logger.py)
+- **JS Hook 工具（new 系列）**:
+  - Java/智能: [frida_common_new.js](mdc:fridac/frida_common_new.js)
+  - 定位 Hook: [frida_location_hooks_new.js](mdc:fridac/frida_location_hooks_new.js)
+  - Native 工具: [frida_native_common.js](mdc:fridac/frida_native_common.js)
+
+### 运行与兼容
+- 推荐 Python 3.8（最低 3.6.8），Frida ≥ 14
+- Rich 为可选依赖，缺失自动降级；安装可获得彩色 UI
+- 交互会话请不要通过管道（例如 `| cat`），否则颜色与交互会受影响
+
+### 任务系统（2024 新架构）
+- 每个 Hook 命令创建独立 Script；`killall` 真正清理
+- 控制台任务输出统一带前缀 `[#任务ID]`
+- 一键自测命令：在提示符输入 `selftest_all`
+
+### 修改建议
+- Python 改动优先遵循日志/降级模式（见 [logger.py](mdc:fridac/fridac_core/logger.py)）
+- JS Hook 改动统一在 new 文件系（`*_new.js`）中进行
+- 如需扩展 Hook，请在 [script_templates.py](mdc:fridac/fridac_core/script_templates.py) 中新增模板，并走任务系统创建

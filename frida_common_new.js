@@ -315,7 +315,14 @@ function findClasses(pattern, showDetails) {
     LOG("🔍 搜索类: " + pattern, { c: Color.Cyan });
     
     Java.perform(function() {
-        Java.enumerateLoadedClasses().forEach(function(className) {
+        // 使用同步API以避免在部分Frida版本中需要callbacks导致的"onMatch of undefined"错误
+        var loadedClasses = [];
+        try {
+            loadedClasses = Java.enumerateLoadedClassesSync();
+        } catch (_) {
+            loadedClasses = [];
+        }
+        loadedClasses.forEach(function(className) {
             if (className.toLowerCase().indexOf(pattern.toLowerCase()) !== -1) {
                 foundClasses.push(className);
                 
@@ -345,7 +352,14 @@ function enumAllClasses(packageName) {
     LOG("📚 枚举包: " + packageName, { c: Color.Cyan });
     
     Java.perform(function() {
-        Java.enumerateLoadedClasses().forEach(function(className) {
+        // 使用同步API避免回调对象缺失导致的异常
+        var loadedClasses = [];
+        try {
+            loadedClasses = Java.enumerateLoadedClassesSync();
+        } catch (_) {
+            loadedClasses = [];
+        }
+        loadedClasses.forEach(function(className) {
             if (className.indexOf(packageName) === 0) {
                 packageClasses.push(className);
                 LOG("📦 " + className, { c: Color.Green });

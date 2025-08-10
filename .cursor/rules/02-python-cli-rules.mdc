@@ -1,0 +1,34 @@
+---
+globs: fridac/**/*.py
+description: Python CLI开发规范和fridac特定要求
+---
+## Python CLI 开发规范（fridac 特定）
+
+### 版本与兼容
+- 最低 Python 3.6.8；建议 3.8
+- 允许 f-strings；避免 3.7+ 特性依赖
+
+### Rich 优雅降级
+```python
+try:
+    from rich.console import Console
+    from rich.table import Table
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
+```
+
+### 日志与输出
+- 使用统一日志接口（见 [logger.py](mdc:fridac/fridac_core/logger.py)）：`log_info/log_success/log_warning/log_error/log_debug`
+- 不直接 `print` 彩色 ANSI，交互侧由 Python 端渲染
+
+### 结构与错误处理
+- 函数名英文、注释中文，完整错误处理与清晰提示
+- 文件操作、设备连接、用户输入均需显式校验与异常捕获
+
+### 自动补全
+- 参见 [completer.py](mdc:fridac/fridac_core/completer.py)：提供 Tab 补全、帮助、参数提示、历史管理
+
+### RPC/脚本加载
+- JS 函数必须在 `rpc.exports` 或 `global` 导出（见 [script_manager.py](mdc:fridac/fridac_core/script_manager.py)）
+- 保证文件加载顺序与依赖完整（见 [script_templates.py](mdc:fridac/fridac_core/script_templates.py)）

@@ -1,0 +1,14 @@
+---
+description: fridacli任务管理系统核心架构与扩展指南
+---
+## 任务管理系统（2024 重构）
+
+- 每个 Hook 命令创建独立 Frida Script，互不干扰
+- 通过 `script.unload()` 实现真正清理；`killall` 彻底恢复状态
+- Python 端统一生命周期管理： [task_manager.py](mdc:fridac/fridac_core/task_manager.py)
+- 脚本模板与装配： [script_templates.py](mdc:fridac/fridac_core/script_templates.py)、[script_manager.py](mdc:fridac/fridac_core/script_manager.py)
+
+### 开发建议
+- 新增 Hook：优先在模板中实现，然后由任务系统创建并跟踪
+- 输出前缀统一 `[#任务ID]`，便于关联日志与状态
+- 自测命令：在交互提示符输入 `selftest_all`
