@@ -146,12 +146,13 @@ function LOG(message, options) {
     
     // 发送给任务管理器统计
     if (typeof TASK_ID !== 'undefined') {
-        send({
-            type: 'task_hit',
-            task_id: TASK_ID,
-            message: message,
-            timestamp: Date.now()
-        });
+        // 最小化 emitEvent 实现
+        try {
+            var evt = { type: 'task_hit', ts: Date.now(), task_id: TASK_ID, items: { message: String(message) } };
+            try { evt.pid = Process.id; } catch(_){}
+            try { evt.tid = Process.getCurrentThreadId(); } catch(_){}
+            send(evt);
+        } catch(_) {}
     }
 }
 
@@ -169,6 +170,22 @@ function printStack() {
         LOG("⚠️ 无法获取堆栈信息: " + e.message, { c: Color.Yellow });
     }
 }
+
+// 结构化事件最小实现（避免 emitEvent 未定义导致脚本报错）
+if (typeof emitEvent === 'undefined') {
+    var emitEvent = function(eventType, fields) {
+        try {
+            var evt = fields || {};
+            evt.type = eventType || evt.type || 'event';
+            evt.ts = Date.now();
+            try { evt.pid = Process.id; } catch(_){ }
+            try { evt.tid = Process.getCurrentThreadId(); } catch(_){ }
+            send(evt);
+        } catch (e) {
+            try { send({ type: 'event', error: e.message }); } catch(_){ }
+        }
+    };
+}
 '''
     
     def _get_task_communication_functions(self) -> str:
@@ -180,24 +197,35 @@ function printStack() {
         """
         return '''
 // 任务通信函数
+// 统一结构化事件发射器（若未提供则定义本地版本）
+var emitEvent = (typeof emitEvent === 'function') ? emitEvent : function(eventType, fields) {
+    try {
+        var evt = fields || {};
+        evt.type = eventType || evt.type || 'event';
+        evt.ts = Date.now();
+        try { evt.pid = Process.id; } catch(_){ }
+        try { evt.tid = Process.getCurrentThreadId(); } catch(_){ }
+        send(evt);
+    } catch (e) {
+        try { send({ type: 'event', error: e.message }); } catch(_){ }
+    }
+};
+try { if (typeof global !== 'undefined') global.emitEvent = emitEvent; } catch(_){ }
+
 function notifyTaskHit(details) {
     if (typeof TASK_ID !== 'undefined') {
-        send({
-            type: 'task_hit',
+        emitEvent('task_hit', {
             task_id: TASK_ID,
-            details: details || {},
-            timestamp: Date.now()
+            items: details || {}
         });
     }
 }
 
 function notifyTaskError(error) {
     if (typeof TASK_ID !== 'undefined') {
-        send({
-            type: 'task_error',
+        emitEvent('task_error', {
             task_id: TASK_ID,
-            error: error.toString(),
-            timestamp: Date.now()
+            items: { error: error && error.message ? error.message : String(error) }
         });
     }
 }
@@ -451,19 +479,21 @@ Java.perform(function() {{
             完整的脚本代码
         """
         show_stack = options.get('show_stack', False)
+        stack_lines = options.get('stack_lines')
         
         hook_implementations = {
-            'base64': self._get_base64_hook_impl(show_stack),
-            'toast': self._get_toast_hook_impl(show_stack),
-            'hashmap': self._get_hashmap_hook_impl(options.get('target_key', ''), show_stack),
-            'jsonobject': self._get_json_hook_impl(show_stack),
-            'arraylist': self._get_arraylist_hook_impl(show_stack),
-            'loadlibrary': self._get_loadlibrary_hook_impl(show_stack),
-            'newstringutf': self._get_newstringutf_hook_impl(show_stack),
-            'fileoperations': self._get_fileoperations_hook_impl(show_stack),
-            'edittext': self._get_edittext_hook_impl(show_stack),
-            'log': self._get_log_hook_impl(show_stack),
-            'url': self._get_url_hook_impl(show_stack)
+            'base64': self._get_base64_hook_impl(show_stack, stack_lines),
+            'toast': self._get_toast_hook_impl(show_stack, stack_lines),
+            'hashmap': self._get_hashmap_hook_impl(options.get('target_key', ''), show_stack, stack_lines),
+            'jsonobject': self._get_json_hook_impl(show_stack, stack_lines),
+            'arraylist': self._get_arraylist_hook_impl(show_stack, stack_lines),
+            'loadlibrary': self._get_loadlibrary_hook_impl(show_stack, stack_lines),
+            'newstringutf': self._get_newstringutf_hook_impl(show_stack, stack_lines),
+            'fileoperations': self._get_fileoperations_hook_impl(show_stack, stack_lines),
+            'edittext': self._get_edittext_hook_impl(show_stack, stack_lines),
+            'log': self._get_log_hook_impl(show_stack, stack_lines),
+            'url': self._get_url_hook_impl(show_stack, stack_lines),
+            'fetch': self._get_fetch_hook_impl(options.get('filter', ''))
         }
         
         hook_impl = hook_implementations.get(hook_type, '')
@@ -520,7 +550,7 @@ Java.perform(function() {{
 '''
         return script
     
-    def _get_base64_hook_impl(self, show_stack: bool) -> str:
+    def _get_base64_hook_impl(self, show_stack: bool, stack_lines: Optional[int]) -> str:
         """获取Base64 Hook实现"""
         return f'''
         // Hook Base64编码
@@ -529,7 +559,7 @@ Java.perform(function() {{
         _enc_str.implementation = function(input, flags) {{
             var result = _enc_str.call(this, input, flags);
             LOG("🔍 Base64编码: " + result, {{ c: Color.Cyan }});
-            {f"printStack();" if show_stack else ""}
+            {f"printStack(false, {stack_lines});" if show_stack and stack_lines is not None else ("printStack();" if show_stack else "")}
             
             notifyTaskHit({{
                 operation: "base64_encode",
@@ -545,7 +575,7 @@ Java.perform(function() {{
         _dec_str.implementation = function(str, flags) {{
             var result = _dec_str.call(this, str, flags);
             LOG("🔍 Base64解码: " + str, {{ c: Color.Cyan }});
-            {f"printStack();" if show_stack else ""}
+            {f"printStack(false, {stack_lines});" if show_stack and stack_lines is not None else ("printStack();" if show_stack else "")}
             
             notifyTaskHit({{
                 operation: "base64_decode", 
@@ -557,7 +587,7 @@ Java.perform(function() {{
         }};
 '''
     
-    def _get_toast_hook_impl(self, show_stack: bool) -> str:
+    def _get_toast_hook_impl(self, show_stack: bool, stack_lines: Optional[int]) -> str:
         """获取Toast Hook实现"""
         return f'''
         // Hook Toast显示
@@ -565,7 +595,7 @@ Java.perform(function() {{
         var _makeText = Toast.makeText.overload('android.content.Context', 'java.lang.CharSequence', 'int');
         _makeText.implementation = function(context, text, duration) {{
             LOG("🔍 Toast消息: " + text, {{ c: Color.Cyan }});
-            {f"printStack();" if show_stack else ""}
+            {f"printStack(false, {stack_lines});" if show_stack and stack_lines is not None else ("printStack();" if show_stack else "")}
             
             notifyTaskHit({{
                 operation: "toast_show",
@@ -577,12 +607,12 @@ Java.perform(function() {{
         }};
 '''
     
-    def _get_hashmap_hook_impl(self, search_key: str, show_stack: bool) -> str:
+    def _get_hashmap_hook_impl(self, search_key: str, show_stack: bool, stack_lines: Optional[int]) -> str:
         """获取HashMap Hook实现"""
         key_filter = f'''
             if (key && key.toString().includes("{search_key}")) {{
                 LOG("🔍 HashMap操作 [匹配键]: " + key + " = " + value, {{ c: Color.Cyan }});
-                {f"printStack();" if show_stack else ""}
+                {f"printStack(false, {stack_lines});" if show_stack and stack_lines is not None else ("printStack();" if show_stack else "")}
                 
                 notifyTaskHit({{
                     operation: "hashmap_put",
@@ -593,7 +623,7 @@ Java.perform(function() {{
             }}
         ''' if search_key else f'''
             LOG("🔍 HashMap操作: " + key + " = " + value, {{ c: Color.Cyan }});
-            {f"printStack();" if show_stack else ""}
+            {f"printStack(false, {stack_lines});" if show_stack and stack_lines is not None else ("printStack();" if show_stack else "")}
             
             notifyTaskHit({{
                 operation: "hashmap_put",
@@ -613,7 +643,7 @@ Java.perform(function() {{
         }};
 '''
     
-    def _get_json_hook_impl(self, show_stack: bool) -> str:
+    def _get_json_hook_impl(self, show_stack: bool, stack_lines: Optional[int]) -> str:
         """获取JSON Hook实现"""
         return f'''
         // Hook JSONObject
@@ -622,7 +652,7 @@ Java.perform(function() {{
         _toString.implementation = function() {{
             var result = _toString.call(this);
             LOG("🔍 JSON对象: " + result, {{ c: Color.Cyan }});
-            {f"printStack();" if show_stack else ""}
+            {f"printStack(false, {stack_lines});" if show_stack and stack_lines is not None else ("printStack();" if show_stack else "")}
             
             notifyTaskHit({{
                 operation: "json_toString",
@@ -761,7 +791,7 @@ try {{
     
     # ===== 缺失的Hook实现函数 =====
     
-    def _get_arraylist_hook_impl(self, show_stack: bool) -> str:
+    def _get_arraylist_hook_impl(self, show_stack: bool, stack_lines: Optional[int]) -> str:
         """ArrayList Hook实现"""
         stack_code = "printStackTrace();" if show_stack else ""
         return f'''
@@ -773,13 +803,13 @@ try {{
             if (__arr_add_count <= 20 || (__arr_add_count % 50) == 0) {{
                 LOG("📋 ArrayList.add被调用", {{ c: Color.Cyan }});
                 LOG("  添加对象: " + obj, {{ c: Color.Green }});
-                {stack_code}
+                {f"printStackTrace();" if show_stack and stack_lines is None else (f"printStack(false, {stack_lines});" if show_stack else "")}
             }}
             return _add.call(this, obj);
         }};
         '''
     
-    def _get_loadlibrary_hook_impl(self, show_stack: bool) -> str:
+    def _get_loadlibrary_hook_impl(self, show_stack: bool, stack_lines: Optional[int]) -> str:
         """LoadLibrary Hook实现"""
         stack_code = "printStackTrace();" if show_stack else ""
         return f'''
@@ -788,30 +818,40 @@ try {{
         _loadLibrary.implementation = function (libname) {{
             LOG("🔗 System.loadLibrary被调用", {{ c: Color.Cyan }});
             LOG("  库名: " + libname, {{ c: Color.Yellow }});
-            {stack_code}
+            {f"printStackTrace();" if show_stack and stack_lines is None else (f"printStack(false, {stack_lines});" if show_stack else "")}
             return _loadLibrary.call(this, libname);
         }};
         '''
     
-    def _get_newstringutf_hook_impl(self, show_stack: bool) -> str:
+    def _get_newstringutf_hook_impl(self, show_stack: bool, stack_lines: Optional[int]) -> str:
         """NewStringUTF Hook实现"""
-        return '''
+        # 预构造调用栈片段以避免 f-string 花括号歧义
+        if show_stack:
+            if stack_lines is None:
+                stack_snippet = "LOG(\"📚 Native调用栈:\", {{ c: Color.Cyan }}); console.log(Thread.backtrace(this.context, Backtracer.ACCURATE).map(DebugSymbol.fromAddress).join('\\n'));"
+            else:
+                stack_snippet = f"LOG(\\\"📚 Java调用栈:\\\", {{ c: Color.Cyan }}); printStack(false, {stack_lines});"
+        else:
+            stack_snippet = ""
+
+        return f'''
         var newStringUTF = Module.findExportByName("libart.so", "_ZN3art3JNI12NewStringUTFEP7_JNIEnvPKc");
-        if (!newStringUTF) {
+        if (!newStringUTF) {{
             newStringUTF = Module.findExportByName("libdvm.so", "NewStringUTF");
-        }
-        if (newStringUTF) {
-            Interceptor.attach(newStringUTF, {
-                onEnter: function(args) {
+        }}
+        if (newStringUTF) {{
+            Interceptor.attach(newStringUTF, {{
+                onEnter: function(args) {{
                     var str = Memory.readUtf8String(args[1]);
-                    LOG("🔤 JNI NewStringUTF被调用", { c: Color.Cyan });
-                    LOG("  字符串: " + str, { c: Color.Yellow });
-                }
-            });
-        }
+                    LOG("🔤 JNI NewStringUTF被调用", {{ c: Color.Cyan }});
+                    LOG("  字符串: " + str, {{ c: Color.Yellow }});
+                    {stack_snippet}
+                }}
+            }});
+        }}
         '''
     
-    def _get_fileoperations_hook_impl(self, show_stack: bool) -> str:
+    def _get_fileoperations_hook_impl(self, show_stack: bool, stack_lines: Optional[int]) -> str:
         """File Operations Hook实现"""
         stack_code = "printStackTrace();" if show_stack else ""
         return f'''
@@ -821,12 +861,12 @@ try {{
             var result = _exists.call(this);
             LOG("📁 File.exists被调用", {{ c: Color.Cyan }});
             LOG("  文件路径: " + this.getAbsolutePath(), {{ c: Color.Yellow }});
-            {stack_code}
+            {f"printStackTrace();" if show_stack and stack_lines is None else (f"printStack(false, {stack_lines});" if show_stack else "")}
             return result;
         }};
         '''
     
-    def _get_edittext_hook_impl(self, show_stack: bool) -> str:
+    def _get_edittext_hook_impl(self, show_stack: bool, stack_lines: Optional[int]) -> str:
         """EditText Hook实现"""
         stack_code = "printStackTrace();" if show_stack else ""
         return f'''
@@ -834,12 +874,12 @@ try {{
         EditText.setText.overload('java.lang.CharSequence').implementation = function(text) {{
             LOG("✏️ EditText.setText被调用", {{ c: Color.Cyan }});
             LOG("  设置文本: " + text, {{ c: Color.Yellow }});
-            {stack_code}
+            {f"printStackTrace();" if show_stack and stack_lines is None else (f"printStack(false, {stack_lines});" if show_stack else "")}
             return this.setText(text);
         }};
         '''
     
-    def _get_log_hook_impl(self, show_stack: bool) -> str:
+    def _get_log_hook_impl(self, show_stack: bool, stack_lines: Optional[int]) -> str:
         """Log Hook实现"""
         stack_code = "printStackTrace();" if show_stack else ""
         return f'''
@@ -848,22 +888,280 @@ try {{
         _d.implementation = function(tag, msg) {{
             LOG("📜 Log.d被调用", {{ c: Color.Cyan }});
             LOG("  Tag: " + tag + ", Message: " + msg, {{ c: Color.White }});
-            {stack_code}
+            {f"printStackTrace();" if show_stack and stack_lines is None else (f"printStack(false, {stack_lines});" if show_stack else "")}
             return _d.call(this, tag, msg);
         }};
         '''
     
-    def _get_url_hook_impl(self, show_stack: bool) -> str:
+    def _get_url_hook_impl(self, show_stack: bool, stack_lines: Optional[int]) -> str:
         """URL Hook实现"""
         stack_code = "printStackTrace();" if show_stack else ""
         return f'''
         var URL = Java.use("java.net.URL");
         var URL_init_str = URL.$init.overload('java.lang.String');
+        var __url_hook_count = 0;
+        var __url_hook_last_ts = 0;
         URL_init_str.implementation = function(spec) {{
-            LOG("🌐 URL创建: " + spec, {{ c: Color.Cyan }});
-            {stack_code}
-            // 使用 call 调用原始构造，避免递归
+            __url_hook_count++;
+            var now = Date.now();
+            var shouldLog = (__url_hook_count <= 20) || ((__url_hook_count % 50) === 0) || (now - __url_hook_last_ts >= 2000);
+            if (shouldLog) {{
+                LOG("🌐 URL创建: " + spec, {{ c: Color.Cyan }});
+                {f"printStackTrace();" if show_stack and stack_lines is None else (f"printStack(false, {stack_lines});" if show_stack else "")}
+                __url_hook_last_ts = now;
+            }}
             var retval = URL_init_str.call(this, spec);
             return retval;
         }};
         '''
+
+    def _get_fetch_hook_impl(self, filter_str: str) -> str:
+        """fetch 抓包实现（任务脚本内自包含 OkHttp3 + HttpURLConnection）"""
+        filter_arg = (filter_str or '').replace("'", "\\'")
+        filter_js_value = "'" + filter_arg + "'" if filter_arg else 'null'
+        script = '''
+        try {
+            var __filter = __FRIDAC_FILTER_PLACEHOLDER__;
+            // 通知宿主初始化日志
+            try { send({ type: 'fetch_start', ts: Date.now(), items: { filter: __filter, task_id: TASK_ID } }); } catch(_) {}
+
+            function __useClass(name) {
+                try { return Java.use(name); } catch (e) {
+                    if ((e.message||'').indexOf('ClassNotFoundException') !== -1) {
+                        try { var ld = (typeof findTragetClassLoader==='function') ? findTragetClassLoader(name) : null; if (ld) return Java.ClassFactory.get(ld).use(name); } catch(_){}
+                    }
+                    return null;
+                }
+            }
+
+            function __stack(maxLines) {
+                try { var ex=Java.use('java.lang.Exception').$new(); var tr=ex.getStackTrace(); var lim=maxLines>0?maxLines:20; var out=[],n=0; for (var i=0;i<tr.length&&n<lim;i++){ var el=tr[i].toString(); if(el.indexOf('java.lang.Exception')===-1 && el.indexOf('android.util.Log')===-1 && el.indexOf('dalvik.system')===-1){ out.push(String(el)); n++; } } return out; } catch(_){ return []; }
+            }
+
+            function __charset(h, ct) { try { var s=(ct||h['Content-Type']||h['content-type']||'').toLowerCase(); var i=s.indexOf('charset='); if(i!==-1){ var cs=s.substring(i+8).trim(); var j=cs.indexOf(';'); if(j!==-1) cs=cs.substring(0,j); return cs||null; } } catch(_){ } return null; }
+            function __bytesToString(bytes, cs) { try { var S=Java.use('java.lang.String'); if(cs) { var C=Java.use('java.nio.charset.Charset'); return S.$new(bytes, C.forName(cs)).toString(); } return S.$new(bytes).toString(); } catch(e) { return ''; } }
+
+            function __py(method, url, headers, cookie, body, ct) { 
+                try { 
+                    var low=(method||'GET').toLowerCase(); 
+                    var fn=(['get','post','put','delete','patch','head','options'].indexOf(low)!==-1)?low:'request'; 
+                    var args=[]; 
+                    if(fn==='request'){ 
+                        args.push(JSON.stringify(method)); 
+                        args.push(JSON.stringify(url)); 
+                    } else { 
+                        args.push(JSON.stringify(url)); 
+                    } 
+                    args.push('headers='+JSON.stringify(headers||{})); 
+                    if(cookie){ 
+                        try { 
+                            var parts=String(cookie).split(';'); 
+                            var cobj={}; 
+                            for(var i=0;i<parts.length;i++){ 
+                                var kv=parts[i].trim(); 
+                                if(!kv) continue; 
+                                var idx=kv.indexOf('='); 
+                                if(idx>0) cobj[kv.substring(0,idx).trim()]=kv.substring(idx+1).trim(); 
+                            } 
+                            args.push('cookies='+JSON.stringify(cobj)); 
+                        } catch(_) { } 
+                    } 
+                    if(body && (low==='post'||low==='put'||low==='patch'||low==='delete')){ 
+                        var content=(ct||headers['Content-Type']||headers['content-type']||'').toLowerCase(); 
+                        var tb=String(body).trim(); 
+                        if(content.indexOf('application/json')!==-1 && ((tb.startsWith('{')&&tb.endsWith('}'))||(tb.startsWith('[')&&tb.endsWith(']')))) 
+                            args.push('json='+tb); 
+                        else 
+                            args.push('data='+JSON.stringify(body)); 
+                    } 
+                    return (fn==='request')?('requests.request('+args.join(', ')+')'):('requests.'+fn+'('+args.join(', ')+')'); 
+                } catch(e) { 
+                    return 'requests.get(' + JSON.stringify(url) + ')'; 
+                } 
+            }
+
+            function __emit(library, method, url, headers, cookie, py, body, ct) {
+                var stack = __stack(20);
+                LOG('🌐 捕获请求('+library+'): '+method+' '+url, { c: Color.Cyan });
+                LOG('🐍 '+py, { c: Color.White });
+                printStack();
+                send({ type:'fetch_request', ts: Date.now(), items: { library: library, method: method, url: url, headers: headers, cookies: cookie||null, python: py, body: body||null, contentType: ct||null, task_id: TASK_ID, stack: stack } });
+            }
+
+            function __installOkHttp3() {
+                var ok = false;
+                try {
+                    var candidates = ['okhttp3.RealCall','okhttp3.internal.connection.RealCall'];
+                    for (var i = 0; i < candidates.length; i++) {
+                        var cn = candidates[i];
+                        var C = null;
+                        try { C = __useClass(cn); } catch (e0) { C = null; }
+                        if (!C) { continue; }
+
+                        // execute()
+                        try {
+                            var ex = C.execute.overload();
+                            ex.implementation = function() {
+                                try {
+                                    var req = null;
+                                    try { req = this.request(); } catch (e1) { try { req = this.originalRequest(); } catch (e1b) {} }
+                                    if (!req) return ex.call(this);
+                                    var m = 'GET'; try { m = String(req.method()); } catch (e2) {}
+                                    var u = ''; try { u = String(req.url().toString()); } catch (e3) {}
+                                    var h = {}; try { var headers = req.headers(); var names = headers.names(); var it = names.iterator(); while (it.hasNext()) { var n = String(it.next()); h[n] = String(headers.get(n)); } } catch (e4) {}
+                                    if (__filter) { var hay = u + ' ' + JSON.stringify(h); if (hay.indexOf(__filter) === -1) return ex.call(this); }
+                                    var cookie = h['Cookie'] || h['cookie'] || '';
+                                    var body = '', ct = '';
+                                    try {
+                                        var b = req.body();
+                                        if (b) {
+                                            try { var mt = b.contentType(); ct = mt ? String(mt.toString()) : ''; } catch (e5) {}
+                                            try {
+                                                var Buffer = Java.use('okio.Buffer');
+                                                var buf = Buffer.$new();
+                                                b.writeTo(buf);
+                                                try { var bytes = buf.readByteArray(); var cs = __charset(h, ct) || 'utf-8'; body = __bytesToString(bytes, cs); }
+                                                catch (e6) { try { body = String(buf.readUtf8()); } catch (e7) { body = ''; } }
+                                            } catch (e8) {}
+                                        }
+                                    } catch (e9) {}
+                                    var py = __py(m, u, h, cookie, body, ct);
+                                    __emit('okhttp', m, u, h, cookie, py, body, ct);
+                                } catch (e10) {}
+                                return ex.call(this);
+                            };
+                        } catch (e11) {}
+
+                        // enqueue(Callback)
+                        try {
+                            var en = C.enqueue.overload('okhttp3.Callback');
+                            en.implementation = function(cb) {
+                                try {
+                                    var req = null;
+                                    try { req = this.request(); } catch (e12) { try { req = this.originalRequest(); } catch (e12b) {} }
+                                    if (!req) return en.call(this, cb);
+                                    var m = 'GET'; try { m = String(req.method()); } catch (e13) {}
+                                    var u = ''; try { u = String(req.url().toString()); } catch (e14) {}
+                                    var h = {}; try { var headers = req.headers(); var names = headers.names(); var it = names.iterator(); while (it.hasNext()) { var n = String(it.next()); h[n] = String(headers.get(n)); } } catch (e15) {}
+                                    if (__filter) { var hay = u + ' ' + JSON.stringify(h); if (hay.indexOf(__filter) === -1) return en.call(this, cb); }
+                                    var cookie = h['Cookie'] || h['cookie'] || '';
+                                    var py = __py(m, u, h, cookie, null, null);
+                                    __emit('okhttp', m, u, h, cookie, py, null, null);
+                                } catch (e16) {}
+                                return en.call(this, cb);
+                            };
+                        } catch (e17) {}
+
+                        ok = true;
+                    }
+                } catch (e18) {}
+                if (ok) LOG('✅ OkHttp3 Hook 已启用', { c: Color.Green }); else LOG('ℹ️ 未检测到 OkHttp3', { c: Color.Gray });
+            }
+
+            function __installHttpURLConnection() {
+                var H = null;
+                try { H = __useClass('java.net.HttpURLConnection'); } catch (e) { H = null; }
+                if (!H) { LOG('ℹ️ 未检测到 HttpURLConnection', { c: Color.Gray }); return; }
+
+                // getInputStream
+                try {
+                    var gis = H.getInputStream.overload();
+                    gis.implementation = function() {
+                        try {
+                            var m = ''; try { m = String(this.getRequestMethod()); } catch (_) {}
+                            var u = ''; try { u = String(this.getURL().toString()); } catch (_) {}
+                            var h = {};
+                            try {
+                                var map = this.getRequestProperties();
+                                var it = map.entrySet().iterator();
+                                while (it.hasNext()) {
+                                    var e = it.next();
+                                    var k = e.getKey();
+                                    var key = k ? String(k) : '';
+                                    if (!key) continue;
+                                    var list = e.getValue();
+                                    var vals = [];
+                                    if (list) { var size = list.size(); for (var i = 0; i < size; i++) vals.push(String(list.get(i))); }
+                                    h[key] = vals.join(', ');
+                                }
+                            } catch (_) {}
+                            if (__filter) { var hay = u + ' ' + JSON.stringify(h); if (hay.indexOf(__filter) === -1) return gis.call(this); }
+                            var cookie = h['Cookie'] || h['cookie'] || '';
+                            var py = __py(m || 'GET', u, h, cookie, null, null);
+                            __emit('httpurlconnection', m || 'GET', u, h, cookie, py, null, null);
+                        } catch (_) {}
+                        return gis.call(this);
+                    };
+                } catch (_) {}
+
+                // getOutputStream
+                try {
+                    var gos = H.getOutputStream.overload();
+                    gos.implementation = function() {
+                        try {
+                            var m = ''; try { m = String(this.getRequestMethod()); } catch (_) {}
+                            var u = ''; try { u = String(this.getURL().toString()); } catch (_) {}
+                            var h = {};
+                            try {
+                                var map = this.getRequestProperties();
+                                var it = map.entrySet().iterator();
+                                while (it.hasNext()) {
+                                    var e = it.next();
+                                    var k = e.getKey();
+                                    var key = k ? String(k) : '';
+                                    if (!key) continue;
+                                    var list = e.getValue();
+                                    var vals = [];
+                                    if (list) { var size = list.size(); for (var i = 0; i < size; i++) vals.push(String(list.get(i))); }
+                                    h[key] = vals.join(', ');
+                                }
+                            } catch (_) {}
+                            if (__filter) { var hay = u + ' ' + JSON.stringify(h); if (hay.indexOf(__filter) === -1) return gos.call(this); }
+                            var cookie = h['Cookie'] || h['cookie'] || '';
+                            var py = __py(m || 'GET', u, h, cookie, null, null);
+                            __emit('httpurlconnection', m || 'GET', u, h, cookie, py, null, null);
+                        } catch (_) {}
+                        return gos.call(this);
+                    };
+                } catch (_) {}
+
+                // connect
+                try {
+                    var cn = H.connect.overload();
+                    cn.implementation = function() {
+                        try {
+                            var m = ''; try { m = String(this.getRequestMethod()); } catch (_) {}
+                            var u = ''; try { u = String(this.getURL().toString()); } catch (_) {}
+                            var h = {};
+                            try {
+                                var map = this.getRequestProperties();
+                                var it = map.entrySet().iterator();
+                                while (it.hasNext()) {
+                                    var e = it.next();
+                                    var k = e.getKey();
+                                    var key = k ? String(k) : '';
+                                    if (!key) continue;
+                                    var list = e.getValue();
+                                    var vals = [];
+                                    if (list) { var size = list.size(); for (var i = 0; i < size; i++) vals.push(String(list.get(i))); }
+                                    h[key] = vals.join(', ');
+                                }
+                            } catch (_) {}
+                            if (__filter) { var hay = u + ' ' + JSON.stringify(h); if (hay.indexOf(__filter) === -1) return cn.call(this); }
+                            var cookie = h['Cookie'] || h['cookie'] || '';
+                            var py = __py(m || 'GET', u, h, cookie, null, null);
+                            __emit('httpurlconnection', m || 'GET', u, h, cookie, py, null, null);
+                        } catch (_) {}
+                        return cn.call(this);
+                    };
+                } catch (_) {}
+            }
+
+            Java.perform(function(){ try{ __installOkHttp3(); }catch(_){ } try{ __installHttpURLConnection(); }catch(_){ } });
+            LOG('✅ fetch 任务已启动' + (__filter ? (' (过滤: '+__filter+')') : ''), { c: Color.Green });
+        } catch (e) {
+            LOG('❌ fetch 任务启动失败: ' + e.message, { c: Color.Red });
+            notifyTaskError(e);
+        }
+        '''
+        return script.replace('__FRIDAC_FILTER_PLACEHOLDER__', filter_js_value)

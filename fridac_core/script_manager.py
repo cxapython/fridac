@@ -37,9 +37,6 @@ def create_frida_script():
     js_content += _load_native_hooks()
     js_content += _load_location_hooks()
     js_content += _load_advanced_tracer()
-    # 旧的任务管理系统已禁用 - 改用新的多脚本任务管理
-    # js_content += _load_job_manager()
-    # js_content += _load_job_commands()
     
     # 添加交互式 Shell 初始化与 Java.perform 包装
     js_content = _wrap_with_java_perform(js_content)
@@ -48,32 +45,58 @@ def create_frida_script():
 
 def _load_native_hooks():
     """加载 Native Hook 工具"""
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # 优先加载模块化目录
+    modular_dir = os.path.join(base_dir, 'frida_native')
+    modular_files_order = [
+        'frida_native_core.js',
+        'frida_native_linker.js',
+        'frida_native_jni.js',
+        'frida_native_anti_debug.js',
+        'frida_native_crypto.js',
+        'frida_native_network.js',
+        'frida_native_file_proc.js',
+        'frida_native_stalker.js',
+        'frida_native_analysis.js',
+        'frida_native_suite.js'
+    ]
+
+    if os.path.isdir(modular_dir):
+        try:
+            contents = []
+            for fname in modular_files_order:
+                fpath = os.path.join(modular_dir, fname)
+                if not os.path.exists(fpath):
+                    log_warning("模块化Native文件缺失: {}".format(fpath))
+                    continue
+                with open(fpath, 'r', encoding='utf-8') as f:
+                    contents.append(f.read())
+            if contents:
+                log_debug("已加载模块化 Native Hook 工具: {}".format(', '.join(modular_files_order)))
+                return '\n\n// ===== Native Hook Tools (Modular) =====\n' + '\n\n'.join(contents)
+        except Exception as e:
+            log_warning("加载模块化 Native Hook 工具失败: {}".format(e))
+
+    # 回退到单文件版本
     native_paths = [
         os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frida_native_common.js'),
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_native_common.js'),
+        os.path.join(base_dir, 'frida_native_common.js'),
         os.path.join(os.path.expanduser('~'), 'fridaproject', 'frida_native_common.js'),
         'frida_native_common.js',
         './frida_native_common.js'
     ]
-    
-    native_script_path = None
+
     for path in native_paths:
         if os.path.exists(path):
-            native_script_path = path
-            break
-    
-    if native_script_path:
-        log_debug("找到 Native Hook 工具: {}".format(native_script_path))
-        try:
-            with open(native_script_path, 'r', encoding='utf-8') as f:
-                native_content = f.read()
-            log_debug("Native Hook 工具已集成")
-            return '\n\n// ===== Native Hook Tools =====\n' + native_content
-        except Exception as e:
-            log_warning("加载 Native Hook 工具失败: {}".format(e))
-    else:
-        log_debug("未找到 frida_native_common.js，仅加载 Java Hook 工具")
-    
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    native_content = f.read()
+                log_debug("已加载单文件 Native Hook 工具: {}".format(path))
+                return '\n\n// ===== Native Hook Tools =====\n' + native_content
+            except Exception as e:
+                log_warning("加载 Native Hook 工具失败: {}".format(e))
+
+    log_debug("未找到 Native Hook 工具，仅加载 Java Hook 工具")
     return ""
 
 def _load_location_hooks():
@@ -123,45 +146,77 @@ def _load_advanced_tracer():
     
     return ""
 
-def _load_job_manager():
-    """加载旧版任务管理系统（已禁用，仅保留以兼容）"""
-    job_manager_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_job_manager.js')
     
-    if os.path.exists(job_manager_path):
-        try:
-            with open(job_manager_path, 'r', encoding='utf-8') as f:
-                job_manager_content = f.read()
-            log_debug("任务管理系统已集成")
-            return '\n\n// ===== Hook Job Management System =====\n' + job_manager_content
-        except Exception as e:
-            log_warning("加载任务管理系统失败: {}".format(e))
-    else:
-        log_debug("未找到 frida_job_manager.js，任务管理不可用")
-    
-    return ""
-
-def _load_job_commands():
-    """加载旧版任务管理命令（已禁用，仅保留以兼容）"""
-    job_commands_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_job_commands.js')
-    
-    if os.path.exists(job_commands_path):
-        try:
-            with open(job_commands_path, 'r', encoding='utf-8') as f:
-                job_commands_content = f.read()
-            log_debug("任务管理命令已集成")
-            return '\n\n// ===== Job Management Commands =====\n' + job_commands_content
-        except Exception as e:
-            log_warning("加载任务管理命令失败: {}".format(e))
-    else:
-        log_debug("未找到 frida_job_commands.js，任务管理命令不可用")
-    
-    return ""
 
 def _wrap_with_java_perform(js_content):
     """用 Java.perform 包裹 JavaScript 内容并添加 Shell 初始化"""
     
     wrapper_start = '''
+// 顶层RPC兜底：确保 eval 始终可用（即便 Java.perform 内部导出失败或未初始化）
+try {
+    if (typeof rpc === 'undefined') { var rpc = {}; }
+    if (typeof rpc.exports === 'undefined') { rpc.exports = {}; }
+    if (typeof rpc.exports.eval === 'undefined') {
+        rpc.exports.eval = function(code) {
+            try {
+                // 直接在顶层求值
+                var value = eval(code);
+                return (value === undefined || value === null) ? true : value;
+            } catch (e1) {
+                try {
+                    // 回退到 Java.perform 环境中求值
+                    var __ret = undefined;
+                    Java.perform(function() {
+                        try { __ret = eval(code); } catch (_) { __ret = undefined; }
+                    });
+                    return (__ret === undefined || __ret === null) ? true : __ret;
+                } catch (e2) {
+                    // 兜底：返回错误字符串
+                    return 'error: ' + String(e1 && e1.message ? e1.message : e1);
+                }
+            }
+        };
+    }
+} catch (_) {}
+
 Java.perform(function() {
+    // ===== 兼容层：为模块化 Native 工具补齐旧版便捷函数 =====
+    try {
+        if (typeof global === 'undefined') { global = this; }
+        // 1) nativeEnableAllHooks → 使用 ARM 套件
+        if (typeof nativeEnableAllHooks === 'undefined' && typeof nativeEnableArmSuite === 'function') {
+            global.nativeEnableAllHooks = function(showStack) {
+                try { nativeEnableArmSuite({ showStack: !!showStack }); LOG('[+] 兼容层: 已启用所有Native Hook', { c: Color.Green }); } catch (e) { try { LOG('❌ 兼容层(nativeEnableAllHooks)失败: ' + e.message, { c: Color.Red }); } catch(_){} }
+                return true;
+            };
+        }
+        // 2) nativeQuickHookCrypto → 调用 crypto Hook
+        if (typeof nativeQuickHookCrypto === 'undefined' && typeof nativeHookCryptoFunctions === 'function') {
+            global.nativeQuickHookCrypto = function(algorithm) {
+                try { nativeHookCryptoFunctions(algorithm || 'all', 1); LOG('[+] 兼容层: 已启用加密Hook(' + (algorithm||'all') + ')', { c: Color.Green }); } catch (e) { try { LOG('❌ nativeQuickHookCrypto失败: ' + e.message, { c: Color.Red }); } catch(_){} }
+                return true;
+            };
+        }
+        // 3) nativeQuickHookNetwork → 调用网络 Hook
+        if (typeof nativeQuickHookNetwork === 'undefined' && typeof nativeHookNetworkFunctions === 'function') {
+            global.nativeQuickHookNetwork = function() {
+                try { nativeHookNetworkFunctions(1); LOG('[+] 兼容层: 已启用网络Hook', { c: Color.Green }); } catch (e) { try { LOG('❌ nativeQuickHookNetwork失败: ' + e.message, { c: Color.Red }); } catch(_){} }
+                return true;
+            };
+        }
+        // 4) nativeQuickAnalyzeApp → 简要模块信息
+        if (typeof nativeQuickAnalyzeApp === 'undefined') {
+            global.nativeQuickAnalyzeApp = function() {
+                try { var modules = Process.enumerateModulesSync ? Process.enumerateModulesSync() : Process.enumerateModules(); LOG('📦 已加载模块数量: ' + (modules && modules.length ? modules.length : '未知'), { c: Color.Cyan }); } catch (e) { try { LOG('❌ nativeQuickAnalyzeApp失败: ' + e.message, { c: Color.Red }); } catch(_){} }
+                return true;
+            };
+        }
+        // 5) 动态库延迟加载重挂钩规则（TLS/Conscrypt）
+        if (typeof nativeRegisterRehook === 'function') {
+            try { nativeRegisterRehook('rehook_tls', function(name){ var n=(name||'').toLowerCase(); return n.indexOf('ssl')!==-1 || n.indexOf('boringssl')!==-1; }, function(){ try { if (typeof nativeHookTLSFunctions==='function') nativeHookTLSFunctions(1); } catch(_){} }); } catch(_){ }
+            try { nativeRegisterRehook('rehook_conscrypt', function(name){ var n=(name||'').toLowerCase(); return n.indexOf('conscrypt')!==-1; }, function(){ try { if (typeof nativeHookConscryptTLS==='function') nativeHookConscryptTLS(1); } catch(_){} }); } catch(_){ }
+        }
+    } catch (_){ }
 '''
     
     wrapper_end = '''
@@ -241,14 +296,24 @@ function help() {
             LOG("    nativeHookDlopenFamily(showStack) - Hook动态库加载", { c: Color.White });
             LOG("    nativeHookJNIFunctions(showStack) - Hook JNI函数", { c: Color.White });
             LOG("    nativeHookAntiDebug(showStack) - Hook反调试检测", { c: Color.White });
+            LOG("    nativeHookProcessMemoryFunctions(showStack) - Hook 进程/内存管理函数", { c: Color.White });
+            LOG("    nativeHookJNIAndART(showStack) - 观测 JNI/ART (RegisterNatives/字符串/数组/DEX)", { c: Color.White });
+            LOG("    nativeEnableAntiDebugBypass(options) - 启用反调试对抗开关 (ptrace/TracerPid)", { c: Color.White });
             
             LOG("  🔐 加密Hook:", { c: Color.Blue });
             LOG("    nativeHookCryptoFunctions(algorithm, showStack) - Hook加密算法", { c: Color.White });
             LOG("      支持算法: aes, des, md5, sha, all", { c: Color.Yellow });
+            LOG("    nativeHookCryptoPrimitives(showStack) - Hook EVP/HMAC/PBKDF2/RAND/AES 等原语", { c: Color.White });
             
             LOG("  🌐 网络Hook:", { c: Color.Blue });
             LOG("    nativeHookNetworkFunctions(showStack) - Hook网络函数", { c: Color.White });
+            LOG("    nativeHookTLSFunctions(showStack) - Hook TLS 明文 (SSL_read/SSL_write)", { c: Color.White });
+            LOG("    nativeHookConscryptTLS(showStack) - Hook Conscrypt NativeCrypto (Android TLS 明文)", { c: Color.White });
+            LOG("    nativeHookBIOFunctions(showStack) - Hook BIO_read/BIO_write 旁路明文", { c: Color.White });
             
+            LOG("  📁 文件/IO Hook:", { c: Color.Blue });
+            LOG("    nativeHookFileIOFunctions(showStack) - Hook 文件IO函数 (open/read/write 等)", { c: Color.White });
+
             LOG("  📊 分析工具:", { c: Color.Blue });
             LOG("    nativeAnalyzeSO(soName, showExports, showImports) - 分析SO文件", { c: Color.White });
             
@@ -258,6 +323,10 @@ function help() {
             LOG("    nativeQuickAnalyzeApp() - 快速分析应用信息", { c: Color.White });
             LOG("    nativeEnableAllHooks(showStack) - 一键启用所有Native Hook", { c: Color.White });
             LOG("      示例: nativeEnableAllHooks(1)  // 启用所有并显示调用栈", { c: Color.Yellow });
+            LOG("    nativeEnableArmSuite({showStack}) - 一键启用ARM套件 (linker/TLS/Conscrypt/BIO/文件/进程/加密/JNI)", { c: Color.White });
+            LOG("    nativeStartStalker({modules,threads,intervalMs}) - 启动Stalker采样", { c: Color.White });
+            LOG("    nativeStopStalker() - 停止Stalker并输出汇总", { c: Color.White });
+            LOG("    nativeRegisterRehook(name, match, fn) - 注册重挂钩规则 (模块加载后自动执行)", { c: Color.White });
         }
     } else {
         LOG("\\n🔧 Native Hook 工具: 未加载", { c: Color.Yellow });
@@ -324,10 +393,11 @@ rpc.exports = {
     help: help,
     eval: function(code) {
         try {
-            return eval(code);
+            var value = eval(code);
+            return (value === undefined || value === null) ? true : value;
         } catch (e) {
             LOG("❌ 错误: " + e.message, { c: Color.Red });
-            return null;
+            return 'error: ' + String(e && e.message ? e.message : e);
         }
     },
     

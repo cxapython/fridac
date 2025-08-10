@@ -26,7 +26,7 @@ try:
 except ImportError:
     RICH_AVAILABLE = False
 
-from .logger import log_info, log_success, log_error, log_debug, get_console
+from .logger import log_info, log_success, log_error, log_debug, get_console, render_structured_event
 from .completer import FridacCompleter
 from .script_manager import create_frida_script
 from .task_manager import FridaTaskManager, TaskType, TaskStatus
@@ -97,37 +97,94 @@ class FridacSession:
         
         if message['type'] == 'send':
             payload = message['payload']
-            if RICH_AVAILABLE and console:
-                # Rich 着色渲染（字符串启发式、JSON结构友好显示）
-                try:
-                    if isinstance(payload, str):
-                        style = None
-                        if payload.startswith('✅') or payload.startswith('🟢'):
-                            style = 'green'
-                        elif payload.startswith('❌') or payload.startswith('🔴'):
-                            style = 'red'
-                        elif payload.startswith('⚠️') or payload.startswith('🟡'):
-                            style = 'yellow'
-                        elif payload.startswith('🔍') or payload.startswith('📚') or payload.startswith('🌐'):
-                            style = 'cyan'
-                        elif payload.startswith('🔧') or payload.startswith('🎯'):
-                            style = 'bright_white'
-                        if style:
-                            from rich.text import Text
-                            console.print(Text(payload, style=style))
-                        else:
-                            console.print(payload)
-                    else:
-                        # 尝试作为 JSON 渲染
-                        import json
+            # fetch 日志文件处理：识别结构化 fetch 事件
+            try:
+                if isinstance(payload, dict) and payload.get('type') in ('fetch_start', 'fetch_request'):
+                    # 初始化日志文件
+                    if not hasattr(self, '_fetch_log_path') or (payload.get('type') == 'fetch_start'):
+                        from datetime import datetime
+                        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        self._fetch_log_path = os.path.abspath(f"fetch_info_{ts}.log")
                         try:
-                            console.print(payload)
+                            with open(self._fetch_log_path, 'a', encoding='utf-8') as f:
+                                f.write(f"# fetch log started at {ts}\n")
+                                flt = None
+                                try:
+                                    flt = payload.get('items', {}).get('filter')
+                                except Exception:
+                                    flt = None
+                                if flt:
+                                    f.write(f"# filter: {flt}\n")
+                        except Exception as e:
+                            log_error(f"写入fetch日志文件失败: {e}")
+                        if payload.get('type') == 'fetch_start':
+                            # 不再继续统一渲染，直接返回
+                            return
+                    # 写入请求信息
+                    try:
+                        items = payload.get('items') or {}
+                        method = items.get('method') or 'GET'
+                        url = items.get('url') or ''
+                        headers = items.get('headers') or {}
+                        cookies = items.get('cookies')
+                        python_code = items.get('python') or ''
+                        stack = items.get('stack') or []
+                        from datetime import datetime
+                        tss = datetime.now().strftime('%H:%M:%S')
+                        with open(self._fetch_log_path, 'a', encoding='utf-8') as f:
+                            f.write(f"\n[{tss}] {method} {url}\n")
+                            f.write(f"headers: {headers}\n")
+                            if cookies:
+                                f.write(f"cookies: {cookies}\n")
+                            f.write(f"python: {python_code}\n")
+                            if stack:
+                                f.write("stack:\n")
+                                for frame in stack:
+                                    try:
+                                        f.write(f"  {frame}\n")
+                                    except Exception:
+                                        pass
+                    except Exception as e:
+                        log_error(f"写入fetch请求失败: {e}")
+                    # 同时在控制台结构化展示
+                    try:
+                        render_structured_event(payload)
+                    except Exception:
+                        pass
+                    return
+            except Exception:
+                pass
+
+            # 统一处理：若是结构化事件对象则走统一渲染，否则保持原有文本输出
+            try:
+                if isinstance(payload, dict) and ('type' in payload or 'items' in payload or 'ts' in payload or 'timestamp' in payload):
+                    render_structured_event(payload)
+                else:
+                    if RICH_AVAILABLE and console:
+                        try:
+                            from rich.text import Text
+                            style = None
+                            text = payload if isinstance(payload, str) else str(payload)
+                            if text.startswith('✅') or text.startswith('🟢'):
+                                style = 'green'
+                            elif text.startswith('❌') or text.startswith('🔴'):
+                                style = 'red'
+                            elif text.startswith('⚠️') or text.startswith('🟡'):
+                                style = 'yellow'
+                            elif text.startswith('🔍') or text.startswith('📚') or text.startswith('🌐'):
+                                style = 'cyan'
+                            elif text.startswith('🔧') or text.startswith('🎯'):
+                                style = 'bright_white'
+                            console.print(Text(text, style=style or 'white'))
                         except Exception:
-                            console.print(json.dumps(payload, ensure_ascii=False))
+                            print(payload)
+                    else:
+                        print(payload)
+            except Exception:
+                try:
+                    print(payload)
                 except Exception:
-                    console.print(payload)
-            else:
-                print(payload)
+                    pass
         elif message['type'] == 'error':
             log_error("脚本错误: {}".format(message['description']))
     
@@ -339,28 +396,39 @@ class FridacSession:
         self.task_manager.show_stats()
     
     def disconnect(self):
-        """从目标断开并做善后清理"""
+        """从目标断开并做善后清理（优先快速、避免卡死）"""
         self.running = False
-        
-        # 清理所有任务
-        if self.task_manager:
-            try:
-                self.task_manager.cleanup()
-            except Exception as e:
-                log_error(f"清理任务时出错: {e}")
-        
-        if self.script:
-            try:
-                self.script.unload()
-                log_debug("脚本已卸载")
-            except:
-                pass
+
+        detach_ok = False
+        # 1) 优先分离进程（detach 会隐式销毁所有脚本，避免逐个 unload 卡住）
         if self.target_process:
             try:
                 self.target_process.detach()
+                detach_ok = True
                 log_debug("进程已分离")
-            except:
+            except Exception as e:
+                log_error(f"分离进程失败: {e}")
+
+        # 2) 主脚本卸载（未分离或分离失败时再尝试）
+        if self.script and not detach_ok:
+            try:
+                self.script.unload()
+                log_debug("脚本已卸载")
+            except Exception:
                 pass
+
+        # 3) 任务清理：分离成功则直接清空记录，否则逐个清理
+        if self.task_manager:
+            try:
+                if detach_ok:
+                    task_count = len(self.task_manager.tasks)
+                    self.task_manager.tasks.clear()
+                    log_info(f"🧹 已快速清空 {task_count} 个任务记录（已分离进程）")
+                else:
+                    self.task_manager.cleanup()
+            except Exception as e:
+                log_error(f"清理任务时出错: {e}")
+
         log_success("已断开连接")
 
 def run_interactive_session(session):
@@ -388,6 +456,7 @@ def run_interactive_session(session):
             # Handle exit commands
             if user_input.lower() in ['q', 'quit', 'exit']:
                 log_info("正在退出...")
+                session.running = False
                 break
             
             # 兼容 JS 风格的命令调用（如 hookurl() / kill(3) / hookbase64(true)）
@@ -482,6 +551,27 @@ def _handle_task_commands(session, user_input):
         session.show_task_stats()
         return True
     
+    # 兼容旧风格：traceMethod(...) -> 创建方法Hook任务
+    elif cmd == 'tracemethod':
+        if len(parts) < 2:
+            log_error("❌ 用法: traceMethod <class.method> [show_stack]")
+            return True
+        target = parts[1]
+        show_stack = len(parts) > 2 and parts[2].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 3:
+            try:
+                stack_lines = int(parts[3])
+            except Exception:
+                stack_lines = None
+        options = {'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
+        task_id = session.create_hook_task('method', target, options)
+        if task_id > 0:
+            log_success(f"✅ 方法Hook任务已创建: #{task_id}")
+        return True
+
     # 创建Hook任务的简化命令
     elif cmd == 'hookmethod':
         if len(parts) < 2:
@@ -489,7 +579,15 @@ def _handle_task_commands(session, user_input):
             return True
         target = parts[1]
         show_stack = len(parts) > 2 and parts[2].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 3:
+            try:
+                stack_lines = int(parts[3])
+            except Exception:
+                stack_lines = None
         options = {'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
         task_id = session.create_hook_task('method', target, options)
         if task_id > 0:
             log_success(f"✅ 方法Hook任务已创建: #{task_id}")
@@ -501,7 +599,15 @@ def _handle_task_commands(session, user_input):
             return True
         target = parts[1]
         show_stack = len(parts) > 2 and parts[2].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 3:
+            try:
+                stack_lines = int(parts[3])
+            except Exception:
+                stack_lines = None
         options = {'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
         task_id = session.create_hook_task('class', target, options)
         if task_id > 0:
             log_success(f"✅ 类Hook任务已创建: #{task_id}")
@@ -513,7 +619,15 @@ def _handle_task_commands(session, user_input):
             return True
         target = parts[1]
         show_stack = len(parts) > 2 and parts[2].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 3:
+            try:
+                stack_lines = int(parts[3])
+            except Exception:
+                stack_lines = None
         options = {'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
         task_id = session.create_hook_task('native', target, options)
         if task_id > 0:
             log_success(f"✅ Native Hook任务已创建: #{task_id}")
@@ -521,7 +635,15 @@ def _handle_task_commands(session, user_input):
     
     elif cmd == 'hookbase64':
         show_stack = len(parts) > 1 and parts[1].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 2:
+            try:
+                stack_lines = int(parts[2])
+            except Exception:
+                stack_lines = None
         options = {'hook_type': 'base64', 'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
         task_id = session.create_hook_task('location', 'base64', options)
         if task_id > 0:
             log_success(f"✅ Base64 Hook任务已创建: #{task_id}")
@@ -531,7 +653,15 @@ def _handle_task_commands(session, user_input):
     
     elif cmd == 'hooktoast':
         show_stack = len(parts) > 1 and parts[1].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 2:
+            try:
+                stack_lines = int(parts[2])
+            except Exception:
+                stack_lines = None
         options = {'hook_type': 'toast', 'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
         task_id = session.create_hook_task('location', 'toast', options)
         if task_id > 0:
             log_success(f"✅ Toast Hook任务已创建: #{task_id}")
@@ -539,7 +669,15 @@ def _handle_task_commands(session, user_input):
     
     elif cmd == 'hookarraylist':
         show_stack = len(parts) > 1 and parts[1].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 2:
+            try:
+                stack_lines = int(parts[2])
+            except Exception:
+                stack_lines = None
         options = {'hook_type': 'arraylist', 'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
         task_id = session.create_hook_task('location', 'arraylist', options)
         if task_id > 0:
             log_success(f"✅ ArrayList Hook任务已创建: #{task_id}")
@@ -547,7 +685,15 @@ def _handle_task_commands(session, user_input):
     
     elif cmd == 'hookloadlibrary':
         show_stack = len(parts) > 1 and parts[1].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 2:
+            try:
+                stack_lines = int(parts[2])
+            except Exception:
+                stack_lines = None
         options = {'hook_type': 'loadlibrary', 'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
         task_id = session.create_hook_task('location', 'loadlibrary', options)
         if task_id > 0:
             log_success(f"✅ LoadLibrary Hook任务已创建: #{task_id}")
@@ -555,7 +701,15 @@ def _handle_task_commands(session, user_input):
     
     elif cmd == 'hooknewstringutf':
         show_stack = len(parts) > 1 and parts[1].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 2:
+            try:
+                stack_lines = int(parts[2])
+            except Exception:
+                stack_lines = None
         options = {'hook_type': 'newstringutf', 'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
         task_id = session.create_hook_task('location', 'newstringutf', options)
         if task_id > 0:
             log_success(f"✅ NewStringUTF Hook任务已创建: #{task_id}")
@@ -563,7 +717,15 @@ def _handle_task_commands(session, user_input):
     
     elif cmd == 'hookfileoperations':
         show_stack = len(parts) > 1 and parts[1].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 2:
+            try:
+                stack_lines = int(parts[2])
+            except Exception:
+                stack_lines = None
         options = {'hook_type': 'fileoperations', 'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
         task_id = session.create_hook_task('location', 'fileoperations', options)
         if task_id > 0:
             log_success(f"✅ File Operations Hook任务已创建: #{task_id}")
@@ -571,16 +733,50 @@ def _handle_task_commands(session, user_input):
     
     elif cmd == 'hookjsonobject':
         show_stack = len(parts) > 1 and parts[1].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 2:
+            try:
+                stack_lines = int(parts[2])
+            except Exception:
+                stack_lines = None
         options = {'hook_type': 'jsonobject', 'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
         task_id = session.create_hook_task('location', 'jsonobject', options)
         if task_id > 0:
             log_success(f"✅ JSONObject Hook任务已创建: #{task_id}")
         return True
     
+    # 兼容旧风格：findStrInMap(key, showStack) -> 创建HashMap定位任务
+    elif cmd == 'findstrinmap':
+        target_key = parts[1] if len(parts) > 1 else ""
+        show_stack = len(parts) > 2 and parts[2].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 3:
+            try:
+                stack_lines = int(parts[3])
+            except Exception:
+                stack_lines = None
+        options = {'hook_type': 'hashmap', 'target_key': target_key, 'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
+        task_id = session.create_hook_task('location', 'hashmap', options)
+        if task_id > 0:
+            log_success(f"✅ HashMap Hook任务已创建: #{task_id}")
+        return True
+
     elif cmd == 'hookhashmap':
         target_key = parts[1] if len(parts) > 1 else ""
         show_stack = len(parts) > 2 and parts[2].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 3:
+            try:
+                stack_lines = int(parts[3])
+            except Exception:
+                stack_lines = None
         options = {'hook_type': 'hashmap', 'target_key': target_key, 'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
         task_id = session.create_hook_task('location', 'hashmap', options)
         if task_id > 0:
             log_success(f"✅ HashMap Hook任务已创建: #{task_id}")
@@ -588,7 +784,15 @@ def _handle_task_commands(session, user_input):
     
     elif cmd == 'hookedittext':
         show_stack = len(parts) > 1 and parts[1].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 2:
+            try:
+                stack_lines = int(parts[2])
+            except Exception:
+                stack_lines = None
         options = {'hook_type': 'edittext', 'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
         task_id = session.create_hook_task('location', 'edittext', options)
         if task_id > 0:
             log_success(f"✅ EditText Hook任务已创建: #{task_id}")
@@ -596,7 +800,15 @@ def _handle_task_commands(session, user_input):
     
     elif cmd == 'hooklog':
         show_stack = len(parts) > 1 and parts[1].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 2:
+            try:
+                stack_lines = int(parts[2])
+            except Exception:
+                stack_lines = None
         options = {'hook_type': 'log', 'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
         task_id = session.create_hook_task('location', 'log', options)
         if task_id > 0:
             log_success(f"✅ Log Hook任务已创建: #{task_id}")
@@ -608,10 +820,29 @@ def _handle_task_commands(session, user_input):
         if len(parts) > 1:
             val = parts[1].lower()
             show_stack = val in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 2:
+            try:
+                stack_lines = int(parts[2])
+            except Exception:
+                stack_lines = None
         options = {'hook_type': 'url', 'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
         task_id = session.create_hook_task('location', 'url', options)
         if task_id > 0:
             log_success(f"✅ URL Hook任务已创建: #{task_id}")
+        return True
+
+    elif cmd == 'hookfetch':
+        # 语法: hookfetch [filter_string]
+        filter_str = parts[1] if len(parts) > 1 else ''
+        options = {'hook_type': 'fetch', 'filter': filter_str}
+        task_id = session.create_hook_task('location', 'fetch', options)
+        if task_id > 0:
+            log_success(f"✅ fetch 抓包任务已创建: #{task_id}")
+        else:
+            log_error("❌ fetch 抓包任务创建失败")
         return True
 
     # 自测命令：一次性创建常用Hook并触发可验证的调用
@@ -732,6 +963,7 @@ def _show_task_help():
             ("hooknative", "创建Native Hook任务", "hooknative open true"),
             ("hookbase64", "创建Base64 Hook任务", "hookbase64 true"),
             ("hooktoast", "创建Toast Hook任务", "hooktoast"),
+            ("hookfetch [filter]", "创建网络抓包(fetch)任务", "hookfetch mtgsig"),
             ("taskhelp", "显示此帮助", "taskhelp")
         ]
         
@@ -756,6 +988,7 @@ def _show_task_help():
         log_info("hooknative      - 创建Native Hook任务")
         log_info("hookbase64      - 创建Base64 Hook任务")
         log_info("hooktoast       - 创建Toast Hook任务")
+        log_info("hookfetch [filter] - 创建网络抓包(fetch)任务")
         log_info("taskhelp        - 显示此帮助")
         log_info("\n💡 提示: 新的任务管理系统基于脚本隔离，killall可以真正清理所有Hook\n")
 

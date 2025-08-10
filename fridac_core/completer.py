@@ -64,6 +64,7 @@ class FridacCompleter:
             'hookfileoperations': ('📁 创建文件操作Hook任务', "hookfileoperations true"),
             'hooklog': ('📜 创建日志Hook任务', "hooklog true"),
             'hookurl': ('🌐 创建URL Hook任务', "hookurl true"),
+            'hookfetch': ('🌐 创建网络抓包(fetch)任务', "hookfetch mtgsig"),
             'hookmethod': ('⚙️ 创建Java方法Hook任务', "hookmethod com.example.Class.method true"),
             'hookclass': ('⚙️ 创建Java类Hook任务', "hookclass com.example.MainActivity true"),
             'hooknative': ('🖥️ 创建Native Hook任务', "hooknative malloc true"),
@@ -129,75 +130,7 @@ class FridacCompleter:
             ]
         }
     
-    def show_completion_help(self):
-        """使用 rich 显示美观的补全帮助"""
-        if not RICH_AVAILABLE:
-            return
-            
-        console = get_console()
-        if not console:
-            return
-            
-        # Create detailed function table with descriptions and examples
-        func_table = Table(title="🚀 可用函数", box=ROUNDED, show_header=True, header_style="bold magenta")
-        func_table.add_column("描述", style="green", width=40)
-        func_table.add_column("使用示例", style="yellow", width=55)
-        
-        # Select key functions to display (avoid overwhelming the user)
-        key_functions = [
-            ('traceClass', '🏛️ 跟踪类的所有方法', "traceClass('com.example.MainActivity')"),
-            ('hookAllMethodsInJavaClass', '🏛️ 跟踪类的所有方法（新函数名）', "hookAllMethodsInJavaClass('com.example.MainActivity')"),
-            ('traceMethod', '🎯 跟踪特定方法', "traceMethod('com.example.Class.method', true)"),
-            ('hookJavaMethodWithTracing', '🎯 跟踪特定方法（新函数名）', "hookJavaMethodWithTracing('com.example.Class.method', true)"),
-            ('findClasses', '🔍 查找匹配的类', "findClasses('MainActivity', true)"),
-            ('enumAllClasses', '📋 枚举所有已加载的类', "enumAllClasses('com.example')"),
-            ('describeJavaClass', '📖 描述Java类的详细信息', "describeJavaClass('java.lang.String')"),
-            ('printStack', '📚 打印Java调用栈', "printStack()"),
-            ('findTargetClassLoaderForClass', '🔗 查找目标类加载器（新函数名）', "findTargetClassLoaderForClass('com.example.Class')"),
-            ('printJavaCallStack', '📚 打印Java调用栈（新函数名）', "printJavaCallStack(true, 50)"),
-            ('findStrInMap', '🗺️ 监控HashMap查找key对应value', "findStrInMap('password', 1)"),
-            ('bypassTracerPidDetection', '🔒 绕过TracerPid检测', "bypassTracerPidDetection()"),
-            ('inspectObjectFields', '🔍 检查对象字段详情', "inspectObjectFields(this, '上下文信息')"),
-            ('advancedMethodTracing', '🎯 高级方法追踪', "advancedMethodTracing('com.example.Class.method', true, true)"),
-            ('batchHookWithFilters', '📦 批量Hook（黑白名单）', "batchHookWithFilters('com.example', 'test', null)"),
-            ('hookAllApplicationClasses', '🚀 Hook所有应用类', "hookAllApplicationClasses(true)"),
-            ('jobs', '📋 显示所有活跃任务', "jobs()"),
-            ('job', '🔍 显示任务详情', "job(1)"),
-            ('kill', '❌ 取消指定任务', "kill(1)"),
-            ('killall', '🧹 取消所有任务', "killall()"),
-            ('jobstats', '📊 显示任务统计', "jobstats()"),
-            ('traceMethodWithJob', '🎯 带任务管理的方法Hook', "traceMethodWithJob('com.example.Class.method', true)"),
-            ('hookbase64', '🔐 创建Base64 Hook任务', "hookbase64 true"),
-            ('hooktoast', '🍞 创建Toast Hook任务', "hooktoast true"),
-            ('hookjsonobject', '📝 创建JSONObject Hook任务', "hookjsonobject true"),
-            ('hookhashmap', '🗺️ 创建HashMap Hook任务', "hookhashmap password true"),
-            ('tasks', '📋 查看所有任务', "tasks"),
-            ('taskinfo', '🔍 查看任务详情', "taskinfo 1"),
-            ('enableAllHooks', '🚀 启用所有定位Hook', "enableAllHooks(1)"),
-            ('nativeHookCryptoFunctions', '🔐 Hook加密算法', "nativeHookCryptoFunctions('aes', 1)"),
-            ('nativeAnalyzeSO', '🔍 分析SO文件', "nativeAnalyzeSO('libtest.so', 1, 1)"),
-            ('smartTrace', '🎯 智能识别并Hook目标', "smartTrace('com.example.MainActivity')"),
-            ('intelligentHookDispatcher', '🎯 智能识别并Hook目标（新函数名）', "intelligentHookDispatcher('com.example.MainActivity', {enableStackTrace: true})"),
-            ('help', '❓ 显示帮助信息', "help()"),
-        ]
-        
-        for func_name, description, example in key_functions:
-            # Highlight function name in example
-            highlighted_example = example.replace(func_name, f"[cyan]{func_name}[/cyan]")
-            func_table.add_row(description, highlighted_example)
-        
-        # Create patterns tree
-        patterns_tree = Tree("📁 [bold blue]常用类名模式[/bold blue]")
-        for category, patterns in self.common_patterns.items():
-            category_branch = patterns_tree.add(f"[yellow]{category}[/yellow]")
-            for pattern in patterns[:3]:  # Show first 3 in each category
-                category_branch.add(f"[dim]{pattern}...[/dim]")
-        
-        # Display function table and patterns
-        console.print()
-        console.print(func_table)
-        console.print("💡 [bold blue]连接应用后使用 help() 查看所有函数的详细说明[/bold blue]")
-        console.print()
+    # 已移除未使用的 show_completion_help 方法
     
     def complete(self, text, state):
         """带模式匹配的增强补全"""

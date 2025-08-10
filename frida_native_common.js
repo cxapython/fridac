@@ -12,71 +12,110 @@ var NativeConfig = {
 
 // ============= 字节和数据转换工具 =============
 function bytesToString(bytes, encoding) {
+    // 将字节序列转换为字符串，并打印结果
     encoding = encoding || 'utf8';
+    var result;
     try {
-        if (typeof bytes === 'object' && bytes.readCString) {
-            return bytes.readCString();
-        }
-        if (bytes instanceof ArrayBuffer) {
-            bytes = new Uint8Array(bytes);
-        }
-        if (bytes instanceof Uint8Array) {
-            var str = '';
-            for (var i = 0; i < bytes.length && i < NativeConfig.maxStringLength; i++) {
-                str += String.fromCharCode(bytes[i]);
+        if (typeof bytes === 'object' && bytes && bytes.readCString) {
+            result = bytes.readCString();
+        } else {
+            if (bytes instanceof ArrayBuffer) {
+                bytes = new Uint8Array(bytes);
             }
-            return str;
+            if (bytes instanceof Uint8Array) {
+                var str = '';
+                for (var i = 0; i < bytes.length && i < NativeConfig.maxStringLength; i++) {
+                    str += String.fromCharCode(bytes[i]);
+                }
+                result = str;
+            } else {
+                result = (bytes === null || typeof bytes === 'undefined') ? '' : bytes.toString();
+            }
         }
-        return bytes.toString();
     } catch (e) {
-        return '[无法转换的字节数据: ' + e.message + ']';
+        result = '[无法转换的字节数据: ' + e.message + ']';
     }
+    try { LOG('bytesToString => ' + String(result)); } catch (_) {}
+    return result;
 }
 
 function stringToBytes(str) {
+    // 将字符串转换为字节数组，并打印结果
     var bytes = [];
-    for (var i = 0; i < str.length; i++) {
-        bytes.push(str.charCodeAt(i));
+    try {
+        str = (str === null || typeof str === 'undefined') ? '' : String(str);
+        for (var i = 0; i < str.length; i++) {
+            bytes.push(str.charCodeAt(i));
+        }
+    } catch (e) {
+        // 出错时返回空数组
     }
+    try { LOG('stringToBytes => len=' + bytes.length + ', bytes=' + JSON.stringify(bytes)); } catch (_) {}
     return bytes;
 }
 
 function hexDump(ptr, size) {
+    // 执行内存十六进制转储，并打印结果
     size = size || NativeConfig.hexDumpSize;
+    var out;
     try {
-        return hexdump(ptr, { length: size, ansi: true });
+        out = hexdump(ptr, { length: size, ansi: true });
     } catch (e) {
-        return '[无法dump内存: ' + e.message + ']';
+        out = '[无法dump内存: ' + e.message + ']';
     }
+    try { LOG('hexDump =>\n' + String(out)); } catch (_) {}
+    return out;
 }
 
 function safeReadMemory(address, size, type) {
+    // 安全读取内存内容，并打印结果摘要
     type = type || 'bytes';
+    var value;
     try {
         var targetPtr = ptr(address);
         switch (type) {
             case 'bytes':
-                return targetPtr.readByteArray(size);
+                value = targetPtr.readByteArray(size);
+                break;
             case 'string':
-                return targetPtr.readCString();
+                value = targetPtr.readCString();
+                break;
             case 'utf8':
-                return targetPtr.readUtf8String();
+                value = targetPtr.readUtf8String();
+                break;
             case 'int':
-                return targetPtr.readInt();
+                value = targetPtr.readInt();
+                break;
             case 'uint':
-                return targetPtr.readUInt();
+                value = targetPtr.readUInt();
+                break;
             case 'pointer':
-                return targetPtr.readPointer();
+                value = targetPtr.readPointer();
+                break;
             case 'float':
-                return targetPtr.readFloat();
+                value = targetPtr.readFloat();
+                break;
             case 'double':
-                return targetPtr.readDouble();
+                value = targetPtr.readDouble();
+                break;
             default:
-                return targetPtr.readByteArray(size);
+                value = targetPtr.readByteArray(size);
+                break;
         }
     } catch (e) {
-        return '[读取内存失败: ' + e.message + ']';
+        value = '[读取内存失败: ' + e.message + ']';
     }
+    try {
+        var summary;
+        if (value && (value instanceof ArrayBuffer || value instanceof Uint8Array)) {
+            var len = value.byteLength || value.length || 0;
+            summary = '[bytes length=' + String(len) + ']';
+        } else {
+            summary = String(value);
+        }
+        LOG('safeReadMemory(' + String(type) + ') => ' + summary);
+    } catch (_) {}
+    return value;
 }
 
 // ============= 颜色和日志工具 =============
@@ -116,6 +155,70 @@ var LOG = function (input, kwargs) {
         try { send(String(input)); } catch (_) {}
     }
 };
+
+// 统一结构化事件输出（发送JSON对象），不影响现有LOG
+function emitEvent(eventType, fields) {
+    try {
+        var evt = fields || {};
+        evt.type = eventType || evt.type || 'event';
+        evt.ts = Date.now();
+        try { evt.pid = Process.id; } catch(_){}
+        try { evt.tid = Process.getCurrentThreadId(); } catch(_){}
+        send(evt);
+    } catch (e) {
+        try { send({ type: 'event', error: e.message }); } catch(_){}
+    }
+}
+
+// 安全读取C字符串（全局工具）
+function safeCString(p) {
+    try { return (!p || p.isNull && p.isNull()) ? 'NULL' : Memory.readCString(p); } catch (_) { return '[读取失败]'; }
+}
+
+// ============= 速率限制与寄存器采集（ARM/ARM64） =============
+// 速率限制器：避免高频Hook导致刷屏（按键值与时间窗口控制）
+var __rateLimiter = {
+    buckets: {},
+    shouldLog: function(key, maxPerInterval, intervalMs) {
+        try {
+            maxPerInterval = maxPerInterval || 10;
+            intervalMs = intervalMs || 1000;
+            var now = Date.now();
+            var bucket = this.buckets[key];
+            if (!bucket || (now - bucket.windowStart) > intervalMs) {
+                this.buckets[key] = { windowStart: now, count: 1 };
+                return true;
+            }
+            if (bucket.count < maxPerInterval) {
+                bucket.count += 1;
+                return true;
+            }
+            return false;
+        } catch (_) { return true; }
+    }
+};
+
+// 采集寄存器（自动适配 ARMv7/ARM64），仅采集前若干常用寄存器
+function nativeCaptureRegisters(context) {
+    var arch = Process.arch || 'arm64';
+    var regs = {};
+    try {
+        if (arch.indexOf('arm64') !== -1 || arch.indexOf('aarch64') !== -1) {
+            // ARM64: x0-x7, sp, lr, pc
+            ['x0','x1','x2','x3','x4','x5','x6','x7','sp','lr','pc'].forEach(function(r){
+                try { regs[r] = context[r]; } catch (_) {}
+            });
+        } else {
+            // ARMv7: r0-r3, sp, lr, pc
+            ['r0','r1','r2','r3','sp','lr','pc'].forEach(function(r){
+                try { regs[r] = context[r]; } catch (_) {}
+            });
+        }
+    } catch (e) {
+        regs.error = e.message;
+    }
+    return regs;
+}
 
 // ============= 栈跟踪工具 =============
 function printNativeStack() {
@@ -246,6 +349,7 @@ function nativeHookDlopenFamily(showStack) {
                 },
                 onLeave: function(retval) {
                     console.log("[+] dlopen 返回句柄: " + retval + " (库: " + this.library + ")");
+                    try { if (!retval.isNull && retval.toString() === '0x0') return; __tryInvokeRehooks(this.library || ''); } catch(_){}
                 }
             });
         }
@@ -271,10 +375,73 @@ function nativeHookDlopenFamily(showStack) {
             });
         }
         
-        console.log("[+] dlopen/dlsym Hook已启用");
+        // Hook android_dlopen_ext（更贴近 Android 链接器）
+        var android_dlopen_ext = Module.findExportByName(null, "android_dlopen_ext");
+        if (android_dlopen_ext) {
+            Interceptor.attach(android_dlopen_ext, {
+                onEnter: function(args) {
+                    try {
+                        var lib = args[0].isNull() ? "" : Memory.readCString(args[0]);
+                        console.log("[+] android_dlopen_ext 加载库: " + lib);
+                        if (needStack) {
+                            console.log("调用栈:");
+                            console.log(Thread.backtrace(this.context, Backtracer.ACCURATE)
+                                .map(DebugSymbol.fromAddress).join('\n'));
+                        }
+                        this.library = lib;
+                    } catch (_) {}
+                },
+                onLeave: function (retval) {
+                    try { if (!retval.isNull && this.library) __tryInvokeRehooks(this.library); } catch(_){}
+                }
+            });
+        }
+
+        // 可选：枚举已加载模块（dl_iterate_phdr）
+        var dl_iterate_phdr = Module.findExportByName(null, "dl_iterate_phdr");
+        if (dl_iterate_phdr) {
+            Interceptor.attach(dl_iterate_phdr, {
+                onEnter: function(args) {
+                    console.log("[+] dl_iterate_phdr 被调用（可能在枚举已加载模块）");
+                }
+            });
+        }
+
+        console.log("[+] dlopen/dlsym/android_dlopen_ext Hook已启用");
     } catch (e) {
         console.log("[-] dlopen/dlsym Hook失败: " + e.message);
     }
+}
+
+// ============= 自动重挂钩（按模块匹配触发） =============
+var __rehookRegistry = [];
+var __rehookExecuted = {};
+
+function nativeRegisterRehook(name, match, fn) {
+    try {
+        __rehookRegistry.push({ name: name || ('hook_'+(__rehookRegistry.length+1)), match: match, fn: fn });
+        console.log('[+] 已注册重挂钩: ' + name);
+        return true;
+    } catch (e) { return false; }
+}
+
+function __tryInvokeRehooks(libraryName) {
+    try {
+        __rehookRegistry.forEach(function(item){
+            try {
+                var key = item.name + '@' + libraryName;
+                if (__rehookExecuted[key]) return;
+                var ok = false;
+                if (!item.match) ok = true;
+                else if (typeof item.match === 'function') ok = !!item.match(libraryName);
+                else if (item.match instanceof RegExp) ok = item.match.test(libraryName);
+                else if (typeof item.match === 'string') ok = libraryName.indexOf(item.match) !== -1;
+                if (ok && typeof item.fn === 'function') {
+                    try { item.fn(libraryName); __rehookExecuted[key] = 1; } catch(_){}
+                }
+            } catch(_){}
+        });
+    } catch(_){}
 }
 
 // ============= JNI函数Hook =============
@@ -331,6 +498,224 @@ function nativeHookJNIFunctions(showStack) {
     } catch (e) {
         console.log("[-] JNI函数Hook失败: " + e.message);
     }
+}
+
+// ============= JNI/ART 观测（RegisterNatives/字符串/数组/DEX加载） =============
+function nativeHookJNIAndART(showStack) {
+    showStack = showStack || 0;
+    var needStack = showStack === 1;
+
+    function logStack(ctx) {
+        if (!needStack) return;
+        try { LOG(Thread.backtrace(ctx, Backtracer.ACCURATE).map(DebugSymbol.fromAddress).join('\n')); } catch(_){}
+    }
+
+    try {
+        // RegisterNatives（解析 JNINativeMethod 表）
+        var reg = Module.findExportByName(null, 'RegisterNatives');
+        if (reg) {
+            Interceptor.attach(reg, {
+                onEnter: function(args) {
+                    try {
+                        var clazz = args[0];
+                        var methods = args[1];
+                        var nMethods = args[2].toInt32();
+                        LOG('☕ RegisterNatives: 方法数量=' + nMethods);
+                        for (var i = 0; i < Math.min(nMethods, 50); i++) {
+                            try {
+                                var base = methods.add(i * (Process.pointerSize * 3));
+                                var namePtr = base.readPointer();
+                                var sigPtr = base.add(Process.pointerSize).readPointer();
+                                var fnPtr  = base.add(Process.pointerSize * 2).readPointer();
+                                var nm = safeCString(namePtr);
+                                var sg = safeCString(sigPtr);
+                                var sym = DebugSymbol.fromAddress(fnPtr).toString();
+                                LOG('  #' + i + ' ' + nm + ' ' + sg + ' -> ' + sym);
+                            } catch (_) {}
+                        }
+                        logStack(this.context);
+                    } catch (_) {}
+                }
+            });
+            console.log('[+] Hook RegisterNatives');
+        }
+
+        // 字符串相关（libart/libdvm 符号，尽量兼容）
+        var stringSymbols = [
+            { pat: 'GetStringUTFChars', role: 'get' },
+            { pat: 'ReleaseStringUTFChars', role: 'rel' },
+            { pat: 'NewStringUTF', role: 'new' }
+        ];
+        ['libart.so','libdvm.so',null].forEach(function(lib){
+            stringSymbols.forEach(function(s){
+                var addr = Module.findExportByName(lib, s.pat);
+                if (!addr && lib === 'libart.so') {
+                    // 兼容C++符号名，尝试遍历匹配
+                    try {
+                        var mod = Process.getModuleByName('libart.so');
+                        var syms = mod.enumerateSymbols().filter(function(x){ return x.name.indexOf(s.pat) !== -1; });
+                        if (syms.length > 0) addr = syms[0].address;
+                    } catch(_){}
+                }
+                if (!addr) return;
+                Interceptor.attach(addr, {
+                    onEnter: function(args) {
+                        try {
+                            if (s.role === 'get') {
+                                this.jstr = args[1];
+                            } else if (s.role === 'new') {
+                                this.cstr = args[1];
+                                LOG('☕ NewStringUTF: ' + safeCString(this.cstr));
+                            }
+                            logStack(this.context);
+                        } catch(_){}
+                    },
+                    onLeave: function(retval) {
+                        try {
+                            if (s.role === 'get') {
+                                var p = retval; // 返回 const char*
+                                LOG('☕ GetStringUTFChars -> ' + safeCString(p));
+                            }
+                        } catch(_){}
+                    }
+                });
+                console.log('[+] Hook JNI 字符串: ' + (lib||'any') + '!' + s.pat);
+            });
+        });
+
+        // 字节数组（Get/ReleaseByteArrayElements）
+        ['GetByteArrayElements','ReleaseByteArrayElements'].forEach(function(nm){
+            var addr = Module.findExportByName('libart.so', nm) || Module.findExportByName('libdvm.so', nm) || Module.findExportByName(null, nm);
+            if (!addr) return;
+            Interceptor.attach(addr, {
+                onEnter: function(args) {
+                    try {
+                        if (nm === 'GetByteArrayElements') {
+                            this.jba = args[1];
+                            this.isCopy = args[2];
+                        }
+                        logStack(this.context);
+                    } catch(_){}
+                },
+                onLeave: function(retval) {
+                    if (nm === 'GetByteArrayElements') {
+                        try {
+                            var ptrBytes = retval;
+                            LOG('☕ GetByteArrayElements -> 指针=' + ptrBytes);
+                        } catch(_){}
+                    }
+                }
+            });
+            console.log('[+] Hook JNI 字节数组: ' + nm);
+        });
+
+        // DexFile::Open（仅观测）
+        try {
+            var art = Process.getModuleByName('libart.so');
+            var openSyms = art.enumerateSymbols().filter(function(s){ return s.name.indexOf('DexFile') !== -1 && s.name.indexOf('Open') !== -1; });
+            openSyms.slice(0, 5).forEach(function(s){
+                Interceptor.attach(s.address, {
+                    onEnter: function(args) {
+                        LOG('📦 DexFile::Open 触发: ' + s.name);
+                        logStack(this.context);
+                    }
+                });
+                console.log('[+] Hook ART: ' + s.name);
+            });
+        } catch(_){}
+
+        LOG('[+] JNI/ART 观测已启用', { c: Color.Green });
+    } catch (e) {
+        LOG('[-] JNI/ART 观测失败: ' + e.message, { c: Color.Red });
+    }
+}
+
+// ============= 反调试对抗开关（可选） =============
+function nativeEnableAntiDebugBypass(options) {
+    options = options || {};
+    var bypassPtrace = options.bypassPtrace !== false; // 默认开启
+    var spoofTracerPid = options.spoofTracerPid !== false; // 默认开启
+
+    // 1) 伪造 ptrace 行为（让常见检测失效）
+    if (bypassPtrace) {
+        try {
+            var ptrace = Module.findExportByName(null, 'ptrace');
+            if (ptrace) {
+                Interceptor.attach(ptrace, {
+                    onEnter: function(args) {
+                        this.request = args[0].toInt32();
+                    },
+                    onLeave: function(retval) {
+                        try {
+                            // 让 PTRACE_TRACEME 返回 0（表示未被跟踪），其他请求保持原样
+                            if (this.request === 0) { // PTRACE_TRACEME == 0
+                                retval.replace(ptr(0));
+                            }
+                        } catch(_){}
+                    }
+                });
+                console.log('[+] 反调试: 已启用 ptrace 绕过');
+            }
+        } catch(_){}
+    }
+
+    // 2) 伪造 /proc/self/status 中 TracerPid
+    if (spoofTracerPid) {
+        try {
+            var trackedFds = {};
+            var openFn = Module.findExportByName(null, 'open');
+            var readFn = Module.findExportByName(null, 'read');
+            if (openFn) {
+                Interceptor.attach(openFn, {
+                    onEnter: function(args) {
+                        try {
+                            var path = Memory.readCString(args[0]);
+                            this.isStatus = (path.indexOf('/proc/') !== -1 && path.indexOf('status') !== -1);
+                        } catch(_) { this.isStatus = false; }
+                    },
+                    onLeave: function(retval) {
+                        try {
+                            var fd = retval.toInt32();
+                            if (this.isStatus && fd > 2) { trackedFds[fd] = 1; }
+                        } catch(_){}
+                    }
+                });
+            }
+            if (readFn) {
+                Interceptor.attach(readFn, {
+                    onEnter: function(args) {
+                        this.fd = args[0].toInt32();
+                        this.buf = args[1];
+                        this.len = args[2].toInt32();
+                    },
+                    onLeave: function(retval) {
+                        try {
+                            var r = retval.toInt32();
+                            if (r > 0 && trackedFds[this.fd]) {
+                                // 就地替换 "TracerPid:  1234" 为 "TracerPid:  0   "（保持长度）
+                                var s = Memory.readUtf8String(this.buf, r);
+                                var idx = s.indexOf('TracerPid:');
+                                if (idx !== -1) {
+                                    var end = s.indexOf('\n', idx);
+                                    if (end === -1) end = s.length;
+                                    var prefix = s.substring(0, idx + 'TracerPid:'.length);
+                                    var suffix = s.substring(end);
+                                    var body = s.substring(idx + 'TracerPid:'.length, end);
+                                    var replaced = prefix + body.replace(/[0-9]+/g, ' 0') + suffix;
+                                    // 写回（长度不变时安全；过长则截断）
+                                    var out = replaced.substr(0, r);
+                                    Memory.writeUtf8String(this.buf, out);
+                                }
+                            }
+                        } catch(_){}
+                    }
+                });
+            }
+            console.log('[+] 反调试: 已启用 TracerPid 伪造');
+        } catch(_){}
+    }
+
+    LOG('[+] 反调试对抗开关已启用', { c: Color.Green });
 }
 
 // ============= 常见加密算法Hook =============
@@ -456,57 +841,71 @@ function nativeHookCryptoFunctions(algorithm, showStack) {
 function nativeHookNetworkFunctions(showStack) {
     showStack = showStack || 0;
     var needStack = showStack === 1;
-    
+
     try {
-        // Hook connect
+        // 辅助: sockaddr 解析到字符串
+        function sockaddrToString(addrPtr) {
+            try {
+                if (!addrPtr) return 'NULL';
+                var family = Memory.readU16(addrPtr);
+                if (family === 2) { // AF_INET
+                    var port = (Memory.readU8(addrPtr.add(2)) << 8) + Memory.readU8(addrPtr.add(3));
+                    var ip = [4,5,6,7].map(function(i){ return Memory.readU8(addrPtr.add(i)); }).join('.');
+                    return ip + ':' + port;
+                } else if (family === 10) { // AF_INET6 (简化显示为前两段)
+                    return 'IPv6';
+                } else if (family === 1) { // AF_UNIX
+                    try { return 'unix:' + Memory.readCString(addrPtr.add(2)); } catch(_) { return 'unix'; }
+                }
+            } catch(_) {}
+            return 'unknown';
+        }
+
+        // Hook connect（IPv4/IPv6/UNIX 简易解析）
         var connect = Module.findExportByName(null, "connect");
         if (connect) {
             Interceptor.attach(connect, {
                 onEnter: function(args) {
-                    var sockfd = args[0].toInt32();
-                    var addr = args[1];
-                    
-                    // 解析sockaddr结构
-                    var family = Memory.readU16(addr);
-                    if (family === 2) { // AF_INET
-                        var port = (Memory.readU8(addr.add(2)) << 8) + Memory.readU8(addr.add(3));
-                        var ip = Memory.readU8(addr.add(4)) + "." + 
-                                Memory.readU8(addr.add(5)) + "." + 
-                                Memory.readU8(addr.add(6)) + "." + 
-                                Memory.readU8(addr.add(7));
-                        console.log("[+] connect: " + ip + ":" + port + " (socket: " + sockfd + ")");
-                    }
-                    
-                    if (needStack) {
-                        console.log("调用栈:");
-                        console.log(Thread.backtrace(this.context, Backtracer.ACCURATE)
-                            .map(DebugSymbol.fromAddress).join('\n'));
-                    }
+                    try {
+                        var sockfd = args[0].toInt32();
+                        var addr = args[1];
+                        var family = Memory.readU16(addr);
+                        var peer = sockaddrToString(addr);
+                        if (__rateLimiter.shouldLog('connect:'+peer, 50, 2000)) {
+                            emitEvent('net_connect', { fd: sockfd, peer: peer });
+                        }
+                        if (needStack) {
+                            LOG(Thread.backtrace(this.context, Backtracer.ACCURATE)
+                                .map(DebugSymbol.fromAddress).join('\n'));
+                        }
+                    } catch (_) {}
                 }
             });
         }
-        
+
         // Hook send/recv
         var send = Module.findExportByName(null, "send");
         if (send) {
             Interceptor.attach(send, {
                 onEnter: function(args) {
-                    var sockfd = args[0].toInt32();
-                    var len = args[2].toInt32();
-                    console.log("[+] send: socket=" + sockfd + ", len=" + len);
-                    if (len > 0 && len < 1024) {
-                        console.log("  数据: " + hexdump(args[1], { length: Math.min(len, 64) }));
-                    }
-                    
-                    if (needStack) {
-                        console.log("调用栈:");
-                        console.log(Thread.backtrace(this.context, Backtracer.ACCURATE)
-                            .map(DebugSymbol.fromAddress).join('\n'));
-                    }
+                    try {
+                        var sockfd = args[0].toInt32();
+                        var len = args[2].toInt32();
+                        if (__rateLimiter.shouldLog('send:'+sockfd, 100, 1000)) {
+                            emitEvent('net_send', { fd: sockfd, len: len });
+                        }
+                        if (len > 0 && len <= 1024 && __rateLimiter.shouldLog('send:dump', 10, 1000)) {
+                            LOG(hexdump(args[1], { length: Math.min(len, 128) }));
+                        }
+                        if (needStack) {
+                            LOG(Thread.backtrace(this.context, Backtracer.ACCURATE)
+                                .map(DebugSymbol.fromAddress).join('\n'));
+                        }
+                    } catch (_) {}
                 }
             });
         }
-        
+
         var recv = Module.findExportByName(null, "recv");
         if (recv) {
             Interceptor.attach(recv, {
@@ -516,22 +915,627 @@ function nativeHookNetworkFunctions(showStack) {
                     this.len = args[2].toInt32();
                 },
                 onLeave: function(retval) {
-                    var received = retval.toInt32();
-                    if (received > 0) {
-                        console.log("[+] recv: socket=" + this.sockfd + ", received=" + received);
-                        if (received < 1024) {
-                            console.log("  数据: " + hexdump(this.buf, { length: Math.min(received, 64) }));
+                    try {
+                        var received = retval.toInt32();
+                        if (received > 0) {
+                            if (__rateLimiter.shouldLog('recv:'+this.sockfd, 100, 1000)) {
+                                emitEvent('net_recv', { fd: this.sockfd, len: received });
+                            }
+                            if (received <= 1024 && this.buf && __rateLimiter.shouldLog('recv:dump', 10, 1000)) {
+                                LOG(hexdump(this.buf, { length: Math.min(received, 128) }));
+                            }
                         }
-                    }
+                    } catch (_) {}
                 }
             });
         }
-        
-        console.log("[+] 网络函数Hook已启用");
+
+        // Hook accept
+        var accept = Module.findExportByName(null, 'accept');
+        if (accept) {
+            Interceptor.attach(accept, {
+                onEnter: function(args) {
+                    this.sockfd = args[0].toInt32();
+                    this.addr = args[1];
+                },
+                onLeave: function(retval) {
+                    try {
+                        var cfd = retval.toInt32();
+                        if (cfd >= 0) {
+                            var peer = 'unknown';
+                            try { if (this.addr && !this.addr.isNull()) peer = sockaddrToString(this.addr); } catch(_){ }
+                            if (__rateLimiter.shouldLog('accept:'+cfd, 50, 1000)) {
+                                emitEvent('net_accept', { fd: cfd, server_fd: this.sockfd, peer: peer });
+                            }
+                        }
+                    } catch(_){}
+                }
+            });
+        }
+
+        // Hook sendmsg
+        var sendmsg = Module.findExportByName(null, 'sendmsg');
+        if (sendmsg) {
+            Interceptor.attach(sendmsg, {
+                onEnter: function(args) {
+                    try { this.sockfd = args[0].toInt32(); } catch(_){ this.sockfd = -1; }
+                },
+                onLeave: function(retval) {
+                    try {
+                        var n = retval.toInt32();
+                        if (n > 0) emitEvent('net_sendmsg', { fd: this.sockfd, len: n });
+                    } catch(_){ }
+                }
+            });
+        }
+
+        // Hook recvmsg
+        var recvmsg = Module.findExportByName(null, 'recvmsg');
+        if (recvmsg) {
+            Interceptor.attach(recvmsg, {
+                onEnter: function(args) {
+                    this.sockfd = args[0].toInt32();
+                    this.msg = args[1];
+                },
+                onLeave: function(retval) {
+                    try {
+                        var n = retval.toInt32();
+                        if (n > 0) {
+                            emitEvent('net_recvmsg', { fd: this.sockfd, len: n });
+                        }
+                    } catch(_){ }
+                }
+            });
+        }
+
+        // Hook getaddrinfo（域名解析）
+        var getaddrinfo = Module.findExportByName(null, "getaddrinfo");
+        if (getaddrinfo) {
+            Interceptor.attach(getaddrinfo, {
+                onEnter: function(args) {
+                    try {
+                        var node = args[0].isNull() ? '' : Memory.readCString(args[0]);
+                        var service = args[1].isNull() ? '' : Memory.readCString(args[1]);
+                        if (__rateLimiter.shouldLog('getaddrinfo:'+node+':'+service, 50, 1000)) {
+                            emitEvent('dns_query', { node: node, service: service });
+                        }
+                    } catch (_) {}
+                }
+            });
+        }
+
+        LOG("[+] 网络函数Hook已启用", { c: Color.Green });
     } catch (e) {
-        console.log("[-] 网络函数Hook失败: " + e.message);
+        LOG("[-] 网络函数Hook失败: " + e.message, { c: Color.Red });
     }
 }
+
+// ============= TLS 明文捕获（OpenSSL/BoringSSL） =============
+function nativeHookTLSFunctions(showStack) {
+    showStack = showStack || 0;
+    var needStack = showStack === 1;
+
+    try {
+        var targets = [
+            { lib: 'libssl.so', name: 'SSL_write', dir: 'send' },
+            { lib: 'libssl.so', name: 'SSL_read', dir: 'recv' },
+            { lib: null,        name: 'SSL_write', dir: 'send' },
+            { lib: null,        name: 'SSL_read',  dir: 'recv' }
+        ];
+
+        targets.forEach(function(t) {
+            var addr = Module.findExportByName(t.lib, t.name);
+            if (!addr) return;
+            Interceptor.attach(addr, {
+                onEnter: function(args) {
+                    this.buf = args[1];
+                    this.len = args[2].toInt32 ? args[2].toInt32() : parseInt(args[2]);
+                    this.dir = t.dir;
+
+                    if (__rateLimiter.shouldLog(t.name + ':' + t.dir, 20, 1000)) {
+                        LOG("🔐 " + t.name + "(" + t.dir + ") len=" + this.len);
+                        if (needStack) {
+                            try {
+                                LOG(Thread.backtrace(this.context, Backtracer.ACCURATE)
+                                    .map(DebugSymbol.fromAddress).join('\n'));
+                            } catch (_) {}
+                        }
+                    }
+                },
+                onLeave: function(retval) {
+                    try {
+                        var n = retval.toInt32 ? retval.toInt32() : parseInt(retval);
+                        if (n > 0 && n <= 4096 && this.buf) {
+                            var dump = hexdump(this.buf, { length: Math.min(n, 256) });
+                            if (__rateLimiter.shouldLog(t.name + ':dump', 10, 1000)) {
+                                LOG("📦 TLS(" + this.dir + ") 数据(前256字节):\n" + dump);
+                            }
+                        }
+                    } catch (_) {}
+                }
+            });
+            console.log("[+] Hook TLS 函数: " + (t.lib || 'any') + "!" + t.name);
+        });
+
+    } catch (e) {
+        console.log("[-] TLS Hook失败: " + e.message);
+    }
+}
+
+// ============= Conscrypt/Android TLS 明文捕获（NativeCrypto JNI） =============
+function nativeHookConscryptTLS(showStack) {
+    showStack = showStack || 0;
+    var needStack = showStack === 1;
+
+    function hookAddr(addr, name, dir) {
+        try {
+            Interceptor.attach(addr, {
+                onEnter: function(args) {
+                    this.buf = args[2] || args[1];
+                    this.len = (args[3] || args[2]);
+                    try { this.n = this.len.toInt32 ? this.len.toInt32() : parseInt(this.len); } catch (_) { this.n = 0; }
+                    this.dir = dir;
+                    if (__rateLimiter.shouldLog('Conscrypt:'+name, 20, 1000)) {
+                        LOG('🔐 Conscrypt '+name+'('+dir+') len=' + this.n);
+                        if (needStack) {
+                            try { LOG(Thread.backtrace(this.context, Backtracer.ACCURATE).map(DebugSymbol.fromAddress).join('\n')); } catch(_){}
+                        }
+                    }
+                },
+                onLeave: function(retval) {
+                    try {
+                        var r = retval.toInt32 ? retval.toInt32() : parseInt(retval);
+                        if (r > 0 && r <= 4096 && this.buf && __rateLimiter.shouldLog('Conscrypt:'+name+':dump', 10, 1000)) {
+                            LOG('📦 Conscrypt('+this.dir+') 前256字节:\n' + hexdump(this.buf, { length: Math.min(r, 256) }));
+                        }
+                    } catch (_) {}
+                }
+            });
+            return true;
+        } catch (e) { return false; }
+    }
+
+    try {
+        var targets = [];
+        // 常见模块名包含 conscrypt 或 javacrypto
+        var modules = Process.enumerateModules();
+        modules.forEach(function(m) {
+            var name = (m.name || '').toLowerCase();
+            if (name.indexOf('conscrypt') !== -1 || name.indexOf('javacrypto') !== -1) {
+                try {
+                    var exps = m.enumerateExports();
+                    exps.forEach(function(e) {
+                        var en = e.name || '';
+                        if (/NativeCrypto.*SSL_(read|write)/.test(en) || /Java_.*NativeCrypto.*SSL_(read|write)/.test(en)) {
+                            var dir = en.indexOf('write') !== -1 ? 'send' : 'recv';
+                            targets.push({ addr: e.address, name: en, dir: dir, mod: m.name });
+                        }
+                    });
+                } catch (_) {}
+            }
+        });
+
+        if (targets.length === 0) {
+            LOG('⚠️ 未找到 Conscrypt NativeCrypto 符号（可能系统实现不同）', { c: Color.Yellow });
+        } else {
+            targets.forEach(function(t) {
+                if (hookAddr(t.addr, t.name, t.dir)) {
+                    console.log('[+] Hook Conscrypt: ' + t.mod + '!' + t.name);
+                }
+            });
+        }
+    } catch (e) {
+        LOG('[-] Conscrypt TLS Hook失败: ' + e.message, { c: Color.Red });
+    }
+}
+
+// ============= BIO 旁路捕获（BIO_read/BIO_write） =============
+function nativeHookBIOFunctions(showStack) {
+    showStack = showStack || 0;
+    var needStack = showStack === 1;
+    try {
+        [{name:'BIO_read', dir:'recv'}, {name:'BIO_write', dir:'send'}].forEach(function(t){
+            var addr = Module.findExportByName(null, t.name) || Module.findExportByName('libssl.so', t.name);
+            if (!addr) return;
+            Interceptor.attach(addr, {
+                onEnter: function(args) {
+                    this.buf = args[1];
+                    this.len = args[2].toInt32 ? args[2].toInt32() : parseInt(args[2]);
+                    this.dir = t.dir;
+                    if (__rateLimiter.shouldLog('BIO:'+t.name, 50, 1000)) {
+                        LOG('🔎 '+t.name+'('+t.dir+') len=' + this.len);
+                        if (needStack) {
+                            try { LOG(Thread.backtrace(this.context, Backtracer.ACCURATE).map(DebugSymbol.fromAddress).join('\n')); } catch(_){}
+                        }
+                    }
+                },
+                onLeave: function(retval) {
+                    try {
+                        var n = retval.toInt32 ? retval.toInt32() : parseInt(retval);
+                        if (n > 0 && n <= 4096 && this.buf && __rateLimiter.shouldLog('BIO:dump', 10, 1000)) {
+                            LOG('📦 BIO('+this.dir+') 前256字节:\n' + hexdump(this.buf, { length: Math.min(n, 256) }));
+                        }
+                    } catch (_) {}
+                }
+            });
+            console.log('[+] Hook BIO: ' + (addr.moduleName || 'any') + '!' + t.name);
+        });
+        LOG('[+] BIO 函数Hook已启用', { c: Color.Green });
+    } catch (e) {
+        LOG('[-] BIO 函数Hook失败: ' + e.message, { c: Color.Red });
+    }
+}
+
+// ============= 加密原语捕获（EVP/Digest/HMAC/AES/RAND/PBKDF2） =============
+function nativeHookCryptoPrimitives(showStack) {
+    showStack = showStack || 0;
+    var needStack = showStack === 1;
+
+    function hook(name, lib, onEnter, onLeave) {
+        try {
+            var addr = Module.findExportByName(lib, name);
+            if (!addr && lib !== null) addr = Module.findExportByName(null, name);
+            if (!addr) return false;
+            Interceptor.attach(addr, { onEnter: onEnter || function(){}, onLeave: onLeave || function(){} });
+            console.log('[+] Hook 加密原语: ' + (lib || 'any') + '!' + name);
+            return true;
+        } catch (e) { return false; }
+    }
+
+    try {
+        // EVP 对称加密初始化
+        hook('EVP_EncryptInit_ex', 'libcrypto.so', function(args) {
+            try {
+                var key = args[3];
+                var iv  = args[4];
+                if (__rateLimiter.shouldLog('EVP_EncryptInit', 50, 2000)) {
+                    LOG('🔐 EVP_EncryptInit_ex: key前32字节=' + hexdump(key, { length: 32 }) + '\niv=' + hexdump(iv, { length: 16 }));
+                    if (needStack) LOG(Thread.backtrace(this.context, Backtracer.ACCURATE).map(DebugSymbol.fromAddress).join('\n'));
+                }
+            } catch (_) {}
+        });
+        hook('EVP_DecryptInit_ex', 'libcrypto.so', function(args) {
+            try {
+                var key = args[3];
+                var iv  = args[4];
+                if (__rateLimiter.shouldLog('EVP_DecryptInit', 50, 2000)) {
+                    LOG('🔓 EVP_DecryptInit_ex: key前32字节=' + hexdump(key, { length: 32 }) + '\niv=' + hexdump(iv, { length: 16 }));
+                    if (needStack) LOG(Thread.backtrace(this.context, Backtracer.ACCURATE).map(DebugSymbol.fromAddress).join('\n'));
+                }
+            } catch (_) {}
+        });
+
+        // EVP Update 阶段（仅截断）
+        hook('EVP_EncryptUpdate', 'libcrypto.so', function(args) {
+            try { var inPtr = args[3]; var inLen = args[4].toInt32(); if (inLen>0 && inLen<=4096 && __rateLimiter.shouldLog('EVP_EncUpd', 100, 1000)) LOG('📦 EVP_EncryptUpdate 输入: len=' + inLen + '\n' + hexdump(inPtr, { length: Math.min(inLen, 128) })); } catch(_){}
+        });
+        hook('EVP_DecryptUpdate', 'libcrypto.so', function(args) {
+            try { var inPtr = args[3]; var inLen = args[4].toInt32(); if (inLen>0 && inLen<=4096 && __rateLimiter.shouldLog('EVP_DecUpd', 100, 1000)) LOG('📦 EVP_DecryptUpdate 输入: len=' + inLen + '\n' + hexdump(inPtr, { length: Math.min(inLen, 128) })); } catch(_){}
+        });
+
+        // 摘要计算
+        hook('EVP_DigestInit_ex', 'libcrypto.so', function(args) {
+            if (__rateLimiter.shouldLog('EVP_DigestInit', 50, 2000)) LOG('🔎 EVP_DigestInit_ex');
+        });
+        hook('EVP_DigestUpdate', 'libcrypto.so', function(args) {
+            try { var data = args[1]; var len = args[2].toInt32(); if (len>0 && len<=2048 && __rateLimiter.shouldLog('EVP_DigestUpdate', 100, 1000)) LOG('📄 EVP_DigestUpdate: len='+len+'\n'+hexdump(data,{length:Math.min(len,128)})); } catch(_){}
+        });
+        hook('EVP_DigestFinal_ex', 'libcrypto.so', null, function(retval, state) {
+            // 输出缓冲由调用者提供，这里只做阶段标记
+            if (__rateLimiter.shouldLog('EVP_DigestFinal', 50, 2000)) LOG('✅ EVP_DigestFinal_ex 完成');
+        });
+
+        // HMAC
+        hook('HMAC_Init_ex', 'libcrypto.so', function(args){
+            try {
+                var key = args[1]; var len = args[2].toInt32();
+                if (__rateLimiter.shouldLog('HMAC_Init', 50, 2000)) LOG('🔑 HMAC_Init_ex: keyLen='+len+'\n'+hexdump(key,{length:Math.min(len,32)}));
+            } catch(_){}
+        });
+        hook('HMAC_Update', 'libcrypto.so', function(args){
+            try { var data = args[1]; var len = args[2].toInt32(); if (len>0 && len<=2048 && __rateLimiter.shouldLog('HMAC_Update',100,1000)) LOG('📄 HMAC_Update: len='+len+'\n'+hexdump(data,{length:Math.min(len,128)})); } catch(_){}
+        });
+        hook('HMAC_Final', 'libcrypto.so', function(args){ this.out = args[1]; this.outlen = args[2]; }, function(){
+            try { var n = this.outlen.readU32(); if (n>0 && n<=64) LOG('✅ HMAC_Final: outLen='+n+'\n'+hexdump(this.out,{length:n})); } catch(_){}
+        });
+
+        // PBKDF2
+        hook('PKCS5_PBKDF2_HMAC', 'libcrypto.so', function(args){
+            try {
+                var pass = args[0]; var passlen = args[1].toInt32();
+                var salt = args[2]; var saltlen = args[3].toInt32();
+                var iter = args[4].toInt32(); var keylen = args[6].toInt32();
+                if (__rateLimiter.shouldLog('PBKDF2', 20, 5000)) {
+                    LOG('🧪 PKCS5_PBKDF2_HMAC: iter='+iter+', keylen='+keylen);
+                    LOG('  pass(截断):\n'+hexdump(pass,{length:Math.min(passlen,32)}));
+                    LOG('  salt(截断):\n'+hexdump(salt,{length:Math.min(saltlen,32)}));
+                }
+            } catch(_){}
+        }, function(retval){ try { LOG('✅ PBKDF2 完成'); } catch(_){} });
+
+        // RAND
+        hook('RAND_bytes', 'libcrypto.so', function(args){ this.buf=args[0]; this.len=args[1].toInt32(); }, function(retval){ try { if (this.len>0 && this.len<=64) LOG('🎲 RAND_bytes: len='+this.len+'\n'+hexdump(this.buf,{length:this.len})); } catch(_){} });
+
+        // 低层 AES（补充，不与旧函数冲突）
+        ;['AES_set_encrypt_key','AES_set_decrypt_key','AES_encrypt','AES_decrypt'].forEach(function(nm){
+            hook(nm, 'libcrypto.so', function(args){ if (__rateLimiter.shouldLog(nm, 50, 2000)) LOG('🔧 '+nm+' 调用'); });
+        });
+
+        LOG('[+] 加密原语Hook已启用', { c: Color.Green });
+    } catch (e) {
+        LOG('[-] 加密原语Hook失败: '+ e.message, { c: Color.Red });
+    }
+}
+
+// ============= 文件IO 监控（open/openat/read/write 等） =============
+function nativeHookFileIOFunctions(showStack) {
+    showStack = showStack || 0;
+    var needStack = showStack === 1;
+
+    try {
+        var pairs = [
+            { name: 'open' }, { name: 'openat' }, { name: 'creat' },
+            { name: 'read' }, { name: 'write' },
+            { name: 'fopen' }, { name: 'fread' }, { name: 'fwrite' }, { name: 'fclose' },
+            { name: 'rename' }, { name: 'unlink' },
+            { name: 'stat' }, { name: 'lstat' }, { name: 'fstat' }
+        ];
+
+        pairs.forEach(function(p) {
+            var addr = Module.findExportByName(null, p.name);
+            if (!addr) return;
+            Interceptor.attach(addr, {
+                onEnter: function(args) {
+                    this.fn = p.name;
+                    this.args = args;
+                    if (!__rateLimiter.shouldLog('fs:' + p.name, 50, 1000)) return;
+                    try {
+                        if (p.name === 'open' || p.name === 'creat' || p.name === 'fopen') {
+                            var path = Memory.readCString(args[0]);
+                            LOG("📁 " + p.name + ": " + path);
+                        } else if (p.name === 'openat') {
+                            var dfd = args[0].toInt32();
+                            var pth = Memory.readCString(args[1]);
+                            LOG("📁 openat: dfd=" + dfd + ", path=" + pth);
+                        } else if (p.name === 'read' || p.name === 'write') {
+                            var fd = args[0].toInt32();
+                            var len = args[2].toInt32();
+                            LOG("📄 " + p.name + ": fd=" + fd + ", len=" + len);
+                        } else if (p.name === 'rename') {
+                            LOG("🔀 rename: " + Memory.readCString(args[0]) + " -> " + Memory.readCString(args[1]));
+                        } else if (p.name === 'unlink') {
+                            LOG("🗑️ unlink: " + Memory.readCString(args[0]));
+                        }
+                        if (needStack) {
+                            LOG(Thread.backtrace(this.context, Backtracer.ACCURATE)
+                                .map(DebugSymbol.fromAddress).join('\n'));
+                        }
+                    } catch (_) {}
+                }
+            });
+            console.log("[+] Hook 文件IO: " + p.name);
+        });
+    } catch (e) {
+        console.log("[-] 文件IO Hook失败: " + e.message);
+    }
+}
+
+// ============= 进程/内存管理 Hook（mmap/mprotect/prctl/ptrace/exec* 等） =============
+function nativeHookProcessMemoryFunctions(showStack) {
+    showStack = showStack || 0;
+    var needStack = showStack === 1;
+
+    function decodeProt(p) {
+        try {
+            var v = p.toInt32 ? p.toInt32() : p;
+            var flags = [];
+            if (v & 1) flags.push('PROT_READ');
+            if (v & 2) flags.push('PROT_WRITE');
+            if (v & 4) flags.push('PROT_EXEC');
+            if (flags.length === 0) flags.push('PROT_NONE');
+            return flags.join('|');
+        } catch (_) { return String(p); }
+    }
+
+    function safeCString(p) { try { return p.isNull() ? 'NULL' : Memory.readCString(p); } catch (_) { return '[读取失败]'; } }
+
+    try {
+        var mmap = Module.findExportByName(null, 'mmap');
+        if (mmap) {
+            Interceptor.attach(mmap, {
+                onEnter: function(args) {
+                    try {
+                        var addr = args[0];
+                        var length = args[1].toInt32();
+                        var prot = decodeProt(args[2]);
+                        LOG("🧩 mmap: addr=" + addr + ", len=" + length + ", prot=" + prot);
+                        if (needStack) {
+                            LOG(Thread.backtrace(this.context, Backtracer.ACCURATE)
+                                .map(DebugSymbol.fromAddress).join('\n'));
+                        }
+                    } catch (_) {}
+                }
+            });
+        }
+
+        var mprotect = Module.findExportByName(null, 'mprotect');
+        if (mprotect) {
+            Interceptor.attach(mprotect, {
+                onEnter: function(args) {
+                    try {
+                        var addr = args[0];
+                        var length = args[1].toInt32();
+                        var prot = decodeProt(args[2]);
+                        LOG("🛡️ mprotect: addr=" + addr + ", len=" + length + ", prot=" + prot);
+                    } catch (_) {}
+                }
+            });
+        }
+
+        var munmap = Module.findExportByName(null, 'munmap');
+        if (munmap) {
+            Interceptor.attach(munmap, {
+                onEnter: function(args) {
+                    try {
+                        LOG("🧹 munmap: addr=" + args[0] + ", len=" + args[1].toInt32());
+                    } catch (_) {}
+                }
+            });
+        }
+
+        var prctl = Module.findExportByName(null, 'prctl');
+        if (prctl) {
+            Interceptor.attach(prctl, {
+                onEnter: function(args) {
+                    try {
+                        var option = args[0].toInt32();
+                        LOG("⚙️ prctl: option=" + option);
+                    } catch (_) {}
+                }
+            });
+        }
+
+        var ptrace = Module.findExportByName(null, 'ptrace');
+        if (ptrace) {
+            Interceptor.attach(ptrace, {
+                onEnter: function(args) {
+                    try {
+                        var request = args[0].toInt32();
+                        if (__rateLimiter.shouldLog('ptrace:'+request, 20, 2000)) {
+                            LOG("🧪 ptrace: request=" + request);
+                        }
+                        if (needStack) {
+                            LOG(Thread.backtrace(this.context, Backtracer.ACCURATE)
+                                .map(DebugSymbol.fromAddress).join('\n'));
+                        }
+                    } catch (_) {}
+                }
+            });
+        }
+
+        var execve = Module.findExportByName(null, 'execve');
+        if (execve) {
+            Interceptor.attach(execve, {
+                onEnter: function(args) {
+                    try {
+                        var path = safeCString(args[0]);
+                        LOG("🚀 execve: " + path);
+                    } catch (_) {}
+                }
+            });
+        }
+
+        var systemFn = Module.findExportByName(null, 'system');
+        if (systemFn) {
+            Interceptor.attach(systemFn, {
+                onEnter: function(args) {
+                    try { LOG("🚀 system: " + safeCString(args[0])); } catch (_) {}
+                }
+            });
+        }
+
+        LOG("[+] 进程/内存函数Hook已启用", { c: Color.Green });
+    } catch (e) {
+        LOG("[-] 进程/内存函数Hook失败: " + e.message, { c: Color.Red });
+    }
+}
+
+// ============= 动态追踪与热点收敛（Stalker） =============
+var __stalkerState = { running: false, modules: [], threads: [], samples: {}, timer: null };
+
+function nativeStartStalker(options) {
+    options = options || {};
+    var modules = options.modules || []; // 模块白名单（名称包含或正则）
+    var threads = options.threads || []; // 线程ID白名单（为空表示当前线程）
+    var intervalMs = options.intervalMs || 2000; // 汇总上报周期
+
+    function moduleAllowed(moduleName) {
+        if (!modules || modules.length === 0) return true;
+        try {
+            for (var i=0;i<modules.length;i++) {
+                var m = modules[i];
+                if (m instanceof RegExp && m.test(moduleName)) return true;
+                if (typeof m === 'string' && moduleName.indexOf(m) !== -1) return true;
+            }
+        } catch(_){}
+        return false;
+    }
+
+    function followThread(tid) {
+        try {
+            Stalker.follow(tid, {
+                events: { call: true },
+                onCallSummary: function (summary) {
+                    var addrs = Object.keys(summary);
+                    for (var i=0;i<addrs.length;i++) {
+                        try {
+                            var addr = ptr(addrs[i]);
+                            var sym = DebugSymbol.fromAddress(addr);
+                            var mod = sym.moduleName || '';
+                            if (!moduleAllowed(mod)) continue;
+                            var key = (sym.name || addr.toString()) + '@' + mod;
+                            __stalkerState.samples[key] = (__stalkerState.samples[key] || 0) + summary[addrs[i]];
+                        } catch(_){}
+                    }
+                }
+            });
+        } catch (e) { LOG('Stalker 跟踪线程失败: '+e.message, { c: Color.Yellow }); }
+    }
+
+    if (__stalkerState.running) return false;
+    __stalkerState.running = true;
+    __stalkerState.modules = modules;
+    __stalkerState.threads = threads;
+    __stalkerState.samples = {};
+
+    var tids = threads.length ? threads : [ Process.getCurrentThreadId() ];
+    try { if (!threads.length) { Process.enumerateThreads().slice(0, 1).forEach(function(t){ tids[0] = t.id; }); } } catch(_){}
+    tids.forEach(followThread);
+
+    __stalkerState.timer = setInterval(function(){
+        try {
+            var top = [];
+            Object.keys(__stalkerState.samples).forEach(function(k){ top.push({ key: k, count: __stalkerState.samples[k] }); });
+            top.sort(function(a,b){ return b.count - a.count; });
+            var report = top.slice(0, 30);
+            emitEvent('stalker_summary', { items: report });
+            __stalkerState.samples = {};
+        } catch(_){}
+    }, intervalMs);
+
+    LOG('[+] Stalker 已启动', { c: Color.Green });
+    return true;
+}
+
+function nativeStopStalker() {
+    try {
+        __stalkerState.running = false;
+        try { Stalker.unfollow(); } catch(_){}
+        if (__stalkerState.timer) { try { clearInterval(__stalkerState.timer); } catch(_){}; __stalkerState.timer = null; }
+        emitEvent('stalker_summary', { items: [] });
+        LOG('[+] Stalker 已停止', { c: Color.Green });
+        return true;
+    } catch (e) { LOG('停止 Stalker 失败: '+e.message, { c: Color.Red }); return false; }
+}
+
+// ============= 便捷总开关入口（ARM 套件） =============
+function nativeEnableArmSuite(options) {
+    options = options || {};
+    var showStack = options.showStack ? 1 : 0;
+    try {
+        nativeHookDlopenFamily(showStack);
+        nativeHookNetworkFunctions(showStack);
+        nativeHookTLSFunctions(showStack);
+        nativeHookConscryptTLS(showStack);
+        nativeHookBIOFunctions(showStack);
+        nativeHookFileIOFunctions(showStack);
+        nativeHookProcessMemoryFunctions(showStack);
+        nativeHookCryptoPrimitives(showStack);
+        nativeHookJNIAndART(showStack);
+        LOG('[+] ARM 套件已启用', { c: Color.Green });
+    } catch (e) { LOG('ARM 套件启用失败: ' + e.message, { c: Color.Red }); }
+}
+
 
 // ============= SO文件分析工具 =============
 function nativeAnalyzeSO(soName, showExports, showImports) {
@@ -980,6 +1984,19 @@ global.nativeHookJNIFunctions = nativeHookJNIFunctions;
 global.nativeHookCryptoFunctions = nativeHookCryptoFunctions;
 global.nativeHookNetworkFunctions = nativeHookNetworkFunctions;
 global.nativeHookAntiDebug = nativeHookAntiDebug;
+// 新增高级Hook能力
+global.nativeHookTLSFunctions = nativeHookTLSFunctions;
+global.nativeHookConscryptTLS = nativeHookConscryptTLS;
+global.nativeHookBIOFunctions = nativeHookBIOFunctions;
+global.nativeHookFileIOFunctions = nativeHookFileIOFunctions;
+global.nativeHookProcessMemoryFunctions = nativeHookProcessMemoryFunctions;
+global.nativeHookCryptoPrimitives = nativeHookCryptoPrimitives;
+global.nativeHookJNIAndART = nativeHookJNIAndART;
+global.nativeEnableAntiDebugBypass = nativeEnableAntiDebugBypass;
+global.nativeStartStalker = nativeStartStalker;
+global.nativeStopStalker = nativeStopStalker;
+global.nativeRegisterRehook = nativeRegisterRehook;
+global.nativeEnableArmSuite = nativeEnableArmSuite;
 
 // 分析工具
 global.nativeAnalyzeSO = nativeAnalyzeSO;

@@ -1,5 +1,5 @@
 /**
- * 基于 r0tracer.js 设计的高级追踪功能
+ * 高级追踪功能
  * 实现了一些 fridacli 中缺失的功能
  */
 
@@ -530,3 +530,20 @@ if (typeof module !== 'undefined' && module.exports) {
         hasSafeProperty: hasSafeProperty
     };
 }
+
+// ===== Frida 全局导出 =====
+try {
+    // 这些函数需要在交互式环境中可直接调用
+    global.bypassTracerPidDetection = bypassTracerPidDetection;
+    global.inspectObjectFields = inspectObjectFields;
+    global.advancedMethodTracing = advancedMethodTracing;
+    global.batchHookWithFilters = batchHookWithFilters;
+    global.hookAllApplicationClasses = hookAllApplicationClasses;
+    // 非交互主用的工具函数可按需导出
+    global.extractApplicationClasses = extractApplicationClasses;
+    global.getSafeObjectHandle = getSafeObjectHandle;
+    global.hasSafeProperty = hasSafeProperty;
+    if (typeof LOG === 'function') {
+        LOG("🧩 高级追踪工具已加载并导出全局函数", { c: Color.Green });
+    }
+} catch (_) { /* 忽略导出失败以避免初始化中断 */ }

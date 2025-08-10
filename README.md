@@ -30,7 +30,7 @@
 ```bash
 # 克隆项目
 git clone <your-repo-url>
-cd fridacli
+cd fridac
 
 # 安装依赖
 pip install frida>=14.0.0 rich>=10.0.0
@@ -39,10 +39,10 @@ pip install frida>=14.0.0 rich>=10.0.0
 sudo cp fridac /usr/local/bin/fridac
 sudo chmod +x /usr/local/bin/fridac
 
-# 复制Hook工具集
-sudo cp frida_common.js /usr/local/bin/frida_common.js
+# 复制（或确保可访问）Hook 工具脚本
+sudo cp frida_common_new.js /usr/local/bin/frida_common_new.js
 sudo cp frida_native_common.js /usr/local/bin/frida_native_common.js
-sudo cp frida_location_hooks.js /usr/local/bin/frida_location_hooks.js
+sudo cp frida_location_hooks_new.js /usr/local/bin/frida_location_hooks_new.js
 ```
 
 ### 方式二：本地使用
@@ -103,25 +103,24 @@ smartTrace('malloc', {showArgs: true})  // Native函数
 | `enumAllClasses()` | 📜 枚举所有已加载的类 | `enumAllClasses('com.example')` |
 | `describeJavaClass()` | 📋 描述Java类的详细信息 | `describeJavaClass('java.lang.String')` |
 | `printStack()` | 📚 打印Java调用栈 | `printStack()` |
-| `findTargetClassLoader()` | 🔧 查找目标类加载器 | `findTargetClassLoader('com.example.Class')` |
+| `findTragetClassLoader()` | 🔧 查找目标类加载器 | `findTragetClassLoader('com.example.Class')` |
 | `findStrInMap()` | 🗺️ 监控HashMap查找key对应value | `findStrInMap('password', 1)` |
 
 ### 📍 定位Hook函数（新任务系统）
 
 | 函数名 | 描述 | 使用示例 |
 |--------|------|----------|
-| `hookBase64()` | 🔤 Hook Base64编码解码 | `hookBase64(1)` |
-| `hookToast()` | 🍞 Hook Toast显示 | `hookToast(1)` |
-| `hookJSONObject()` | 📄 Hook JSONObject操作 | `hookJSONObject(1)` |
-| `hookHashMap()` | 🗺️ Hook HashMap操作 | `hookHashMap('key', 1)` |
-| `hookEditText()` | ✏️ Hook EditText输入 | `hookEditText(1)` |
-| `hookArrayList()` | 📝 Hook ArrayList操作 | `hookArrayList(1)` |
-| `hookLoadLibrary()` | 📚 Hook 动态库加载 | `hookLoadLibrary(1)` |
-| `hookNewStringUTF()` | 🆕 Hook JNI字符串创建 | `hookNewStringUTF(1)` |
-| `hookFileOperations()` | 📁 Hook 文件操作 | `hookFileOperations(1)` |
-| `hookLog()` | 📜 Hook Log输出 | `hookLog(1)` |
-| `hookURL()` | 🌐 Hook URL请求 | `hookURL(1)` |
-| `hookFileOperations()` | 📁 Hook 文件操作 | `hookFileOperations(1)` |
+| `hookbase64` | 🔤 Hook Base64 编解码 | `hookbase64 1` |
+| `hooktoast` | 🍞 Hook Toast 显示 | `hooktoast 1` |
+| `hookjsonobject` | 📄 Hook JSONObject 操作 | `hookjsonobject 1` |
+| `hookhashmap` | 🗺️ Hook HashMap 操作 | `hookhashmap key 1` |
+| `hookedittext` | ✏️ Hook EditText 输入 | `hookedittext 1` |
+| `hookarraylist` | 📝 Hook ArrayList 操作 | `hookarraylist 1` |
+| `hookloadlibrary` | 📚 Hook 动态库加载 | `hookloadlibrary 1` |
+| `hooknewstringutf` | 🆕 Hook JNI 字符串创建 | `hooknewstringutf 1` |
+| `hookfileoperations` | 📁 Hook 文件操作 | `hookfileoperations 1` |
+| `hooklog` | 📜 Hook Log 输出 | `hooklog 1` |
+| `hookurl` | 🌐 Hook URL 请求 | `hookurl 1` |
 
 ### 🔧 Native层Hook函数
 
@@ -154,22 +153,18 @@ smartTrace('malloc', {showArgs: true})  // Native函数
 ## 📁 项目结构
 
 ```
-fridacli/
-├── fridac                    # 主程序文件 (已增强自动任务追踪)
-├── frida_common.js          # Java Hook 工具集 (已集成任务管理)
-├── frida_native_common.js   # Native Hook 工具集  
-├── frida_location_hooks.js  # 定位Hook 工具集 (已集成任务管理)
-├── frida_advanced_tracer.js # 高级追踪工具集 (基于r0tracer)
-├── frida_job_manager.js    # Hook任务管理器核心 (已增强自动追踪)
-├── frida_job_commands.js   # 任务管理用户命令
-├── requirements.txt         # Python依赖
-├── INSTALL.md              # 安装说明
-├── ADVANCED_FEATURES.md    # 高级功能详细说明
-├── JOB_MANAGEMENT.md       # 任务管理系统说明
-├── JOB_MANAGEMENT_SUMMARY.md # 任务管理实现总结
-├── RPC_FIXES_SUMMARY.md    # RPC修复总结
-├── REFACTORING_SUMMARY.md  # 重构总结
-└── README.md               # 项目文档 (最新)
+fridac/
+├── fridac                    # 主程序文件（CLI 入口）
+├── frida_common_new.js       # Java Hook 工具集（新）
+├── frida_native_common.js    # Native Hook 工具集（单文件版，或加载 frida_native/ 模块）
+├── frida_native/             # Native Hook 模块化脚本目录
+├── frida_location_hooks_new.js # 定位 Hook 工具集（新）
+├── frida_advanced_tracer.js  # 高级追踪工具（基于 r0tracer）
+├── fridac_core/              # Python 核心模块（session/task/script 等）
+├── requirements.txt          # Python 依赖
+├── ADVANCED_FEATURES.md      # 高级功能说明
+├── FEATURE_SUMMARY.md        # 功能总结
+└── README.md                 # 项目文档（本文件）
 ```
 
 ## ⚙️ 智能补全功能
@@ -212,9 +207,9 @@ fridac> jobs()
 [#2] [active] 自动追踪: nativeEnableAllHooks(1)       🔧Native Hook [8次命中]  30秒前
 [#3] [active] 自动追踪: smartTrace('Login')           🎯智能Hook    [3次命中]  刚刚
 
-# 如果某个Hook太吵可以暂停
-fridac> pause(1)
-✅ 已暂停任务 #1
+# 如输出过多，可使用 kill 终止指定任务
+fridac> kill 1
+🗑️ 任务 #1 已终止
 ```
 
 ### 案例2: 深度分析特定应用
@@ -271,16 +266,12 @@ fridac> nativeHookNetworkFunctions(1)
 🤖 自动注册任务 #3: 自动追踪: nativeHookNetworkFunctions(1)
 ✅ 网络函数Hook已启用 (任务ID: #3)
 
-# 管理任务：如果网络Hook太频繁，可以暂停
-fridac> pause(3)
-✅ 已暂停任务 #3
-
-# 稍后恢复
-fridac> resume(3)
-✅ 已恢复任务 #3
+# 管理任务：如输出过多，可终止任务
+fridac> kill 3
+🗑️ 任务 #3 已终止
 
 # 查看任务详情
-fridac> job(2)
+fridac> taskinfo 2
 📋 任务详情 - #2
 类型: 🔧Native Hook
 目标: nativeHookCryptoFunctions('aes', 1)
@@ -307,9 +298,9 @@ fridac> jobs()
 [#3] [active] 自动追踪: hookToast(1)                  📍定位Hook    [2次命中] 1分钟前
 [#4] [active] 自动追踪: hookAllMethodsInJavaClass('com.example.LoginActivity')  🏛️类Hook  [12次命中] 30秒前
 
-# 暂停噪音较大的Hook
-fridac> pause(1)    # 暂停Log Hook
-fridac> pause(4)    # 暂停类Hook
+# 终止噪音较大的Hook
+fridac> kill 1      # 终止 Log Hook
+fridac> kill 4      # 终止 类 Hook
 
 # 只保留关键的Base64和Toast监控
 fridac> jobs('active')  # 只查看活跃任务
@@ -422,7 +413,7 @@ fridac> pause(2)
 - 📊 **实时统计** - 自动跟踪命中次数、执行时间、最后活动时间
 - 🔄 **向下兼容** - 原有函数用法完全不变，只是增加了任务管理能力
 
-#### 查看和管理任务
+#### 查看和管理任务（新任务系统）
 ```javascript
 // 查看所有活跃任务
 jobs()
@@ -433,20 +424,18 @@ jobs('paused')    // 只显示暂停任务
 jobs('failed')    // 只显示失败任务
 
 // 查看任务详情
-job(1)
+taskinfo 1
 
 // 取消指定任务
-kill(1)
+kill 1
 
 // 取消所有任务
-killall()
+killall
 
 // 取消特定类型的任务
-killall('location_hook')  // 只取消定位Hook任务
+killall location_hook   // 只取消定位 Hook 任务
 
-// 暂停/恢复任务
-pause(1)
-resume(1)
+// 暂停/恢复（当前版本不支持暂停，建议使用 kill 终止并按需重建）
 ```
 
 #### 任务统计和监控
@@ -454,38 +443,11 @@ resume(1)
 // 显示任务统计
 jobstats()
 
-// 查看任务历史
-history(20)
-
-// 清理已完成任务
-cleanup()
-
-// 导出任务配置
-exportJobs()
-
 // 任务管理帮助
 jobhelp()
 ```
 
-#### 手动任务管理 (高级用法)
-```javascript
-// 如果需要更精细的控制，仍可使用带Job后缀的函数
-var jobId = traceMethodWithJob('com.example.Class.method', true)
-
-// 随时取消
-kill(jobId)
-
-// 查看状态
-job(jobId)
-```
-
-#### 快捷命令
-```javascript
-j()        // jobs() 的快捷方式
-k(1)       // kill(1) 的快捷方式  
-ka()       // killall() 的快捷方式
-jh()       // jobhelp() 的快捷方式
-```
+// 其余：history/cleanup/exportJobs/暂停/快捷别名等已移除，使用标准命令
 
 ### 🔐 加密算法Hook支持
 

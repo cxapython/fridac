@@ -32,14 +32,15 @@ function LOG(message, options) {
     }
 }
 
-function printStack() {
+function printStack(showComplete, maxLines) {
     try {
         var exception = Java.use("java.lang.Exception").$new();
         var trace = exception.getStackTrace();
         LOG("📚 调用堆栈:", { c: Color.Cyan });
         
+        var limit = showComplete ? trace.length : (typeof maxLines === 'number' && maxLines > 0 ? maxLines : 20);
         var printed = 0;
-        for (var i = 0; i < trace.length && printed < 8; i++) {
+        for (var i = 0; i < trace.length && printed < limit; i++) {
             var element = trace[i].toString();
             if (element.indexOf("java.lang.Exception") === -1 &&
                 element.indexOf("android.util.Log") === -1 &&
@@ -51,6 +52,11 @@ function printStack() {
     } catch (e) {
         LOG("⚠️ 无法获取堆栈信息: " + e.message, { c: Color.Yellow });
     }
+}
+
+// 兼容别名：printJavaCallStack -> printStack
+function printJavaCallStack(showComplete, maxLines) {
+    try { printStack(showComplete, maxLines); } catch (_) { }
 }
 
 // ClassLoader 搜索功能
@@ -523,6 +529,566 @@ function hookHashMapToFindValue(searchKey, enableStackTrace) {
     });
 }
 
+// ===== 网络抓取与请求转换（fetch） =====
+// 关键Hook点说明：
+// - OkHttp: 优先Hook okhttp3.RealCall.execute() 与 enqueue(Callback)，在请求发送前提取 Request 信息
+// - HttpURLConnection: 辅助Hook connect()/getInputStream()/getOutputStream() 以覆盖常见标准库网络请求
+// - 输出：生成等价的 Python requests 代码，发送结构化事件给 Python 端写入日志，同时控制台打印与调用栈
+// - 过滤：fetch(filterStr) 传入字符串，仅当 URL 或 Headers 含该字符串时才处理与输出
+var __fetch_installed = false;
+var __fetch_filter = null;
+
+function __getStackArray(maxLines) {
+    try {
+        var exception = Java.use("java.lang.Exception").$new();
+        var trace = exception.getStackTrace();
+        var limit = typeof maxLines === 'number' && maxLines > 0 ? maxLines : 20;
+        var frames = [];
+        var printed = 0;
+        for (var i = 0; i < trace.length && printed < limit; i++) {
+            var element = trace[i].toString();
+            if (element.indexOf("java.lang.Exception") === -1 &&
+                element.indexOf("android.util.Log") === -1 &&
+                element.indexOf("dalvik.system") === -1) {
+                frames.push(element + "");
+                printed++;
+            }
+        }
+        return frames;
+    } catch (_) {
+        return [];
+    }
+}
+
+function __useClass(className) {
+    try {
+        return Java.use(className);
+    } catch (e) {
+        if ((e.message || '').indexOf('ClassNotFoundException') !== -1) {
+            try {
+                var loader = findTragetClassLoader(className);
+                if (loader) {
+                    return Java.ClassFactory.get(loader).use(className);
+                }
+            } catch (_) {}
+        }
+        return null;
+    }
+}
+
+function __parseCharsetFromHeaders(headersObj, contentTypeStr) {
+    try {
+        var ct = contentTypeStr || headersObj['Content-Type'] || headersObj['content-type'] || '';
+        var idx = String(ct).toLowerCase().indexOf('charset=');
+        if (idx !== -1) {
+            var cs = ct.substring(idx + 8).trim();
+            var semi = cs.indexOf(';');
+            if (semi !== -1) cs = cs.substring(0, semi).trim();
+            return cs || null;
+        }
+    } catch(_){}
+    return null;
+}
+
+function __bytesToString(byteArray, charsetName) {
+    try {
+        var StringClz = Java.use('java.lang.String');
+        if (charsetName && charsetName.length > 0) {
+            var Charset = Java.use('java.nio.charset.Charset');
+            var cs = Charset.forName(charsetName);
+            return StringClz.$new(byteArray, cs).toString();
+        }
+        return StringClz.$new(byteArray).toString();
+    } catch (e) {
+        return '';
+    }
+}
+
+function __genRequestsCode(method, url, headersObj, cookieStr, bodyStr, contentTypeStr) {
+    try {
+        var pythonHeaders = headersObj || {};
+        var cookiesPy = null;
+        if (cookieStr && String(cookieStr).length > 0) {
+            try {
+                var parts = String(cookieStr).split(';');
+                var cobj = {};
+                for (var i = 0; i < parts.length; i++) {
+                    var kv = parts[i].trim();
+                    if (!kv) continue;
+                    var idx = kv.indexOf('=');
+                    if (idx > 0) {
+                        var k = kv.substring(0, idx).trim();
+                        var v = kv.substring(idx + 1).trim();
+                        if (k) cobj[k] = v;
+                    }
+                }
+                cookiesPy = cobj;
+            } catch (_) {}
+        }
+        var low = (method || 'GET').toLowerCase();
+        var fn = (['get','post','put','delete','patch','head','options'].indexOf(low) !== -1) ? low : 'request';
+        var args = [];
+        if (fn === 'request') {
+            args.push("'" + method + "'");
+            args.push("'" + url + "'");
+        } else {
+            args.push("'" + url + "'");
+        }
+        // headers
+        args.push("headers=" + JSON.stringify(pythonHeaders));
+        if (cookiesPy) args.push("cookies=" + JSON.stringify(cookiesPy));
+        // body
+        if (bodyStr && (low === 'post' || low === 'put' || low === 'patch' || low === 'delete')) {
+            var ct = (contentTypeStr || pythonHeaders['Content-Type'] || pythonHeaders['content-type'] || '').toLowerCase();
+            if (ct.indexOf('application/json') !== -1) {
+                // 尝试作为 JSON
+                var trimmed = String(bodyStr).trim();
+                if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+                    args.push("json=" + trimmed);
+                } else {
+                    args.push("data=" + JSON.stringify(bodyStr));
+                }
+            } else {
+                args.push("data=" + JSON.stringify(bodyStr));
+            }
+        }
+        if (fn === 'request') {
+            return "requests.request(" + args.join(', ') + ")";
+        }
+        return "requests." + fn + "(" + args.join(', ') + ")";
+    } catch (e) {
+        return "requests.get('" + url + "')";
+    }
+}
+
+function __handleOkHttpCall(self) {
+    try {
+        var req = null;
+        try { if (typeof self.request === 'function') req = self.request(); } catch(_){}
+        if (!req) { try { if (typeof self.originalRequest === 'function') req = self.originalRequest(); } catch(_){ } }
+        if (!req) return;
+
+        var method = 'GET';
+        try { method = String(req.method()); } catch(_){}
+        var url = '';
+        try { url = String(req.url().toString()); } catch(_){ }
+
+        var headersObj = {};
+        try {
+            var headers = req.headers();
+            var names = headers.names();
+            var it = names.iterator();
+            while (it.hasNext()) {
+                var name = String(it.next());
+                var value = String(headers.get(name));
+                headersObj[name] = value;
+            }
+        } catch(_){ }
+
+        var cookieStr = '';
+        try { cookieStr = headersObj['Cookie'] || headersObj['cookie'] || ''; } catch(_){ }
+
+        if (__fetch_filter) {
+            var hay = url + ' ' + JSON.stringify(headersObj);
+            if (hay.indexOf(__fetch_filter) === -1) return;
+        }
+
+        // 读取RequestBody
+        var bodyStr = '';
+        var contentTypeStr = '';
+        try {
+            var body = req.body();
+            if (body) {
+                try { var mt = body.contentType(); contentTypeStr = mt ? String(mt.toString()) : ''; } catch(_){ }
+                try {
+                    var BufferClz = Java.use('okio.Buffer');
+                    var buff = BufferClz.$new();
+                    body.writeTo(buff);
+                    try {
+                        // 先按 charset 转字节再转字符串
+                        var bytes = buff.readByteArray();
+                        var cs = __parseCharsetFromHeaders(headersObj, contentTypeStr) || 'utf-8';
+                        bodyStr = __bytesToString(bytes, cs);
+                    } catch(_) {
+                        try { bodyStr = String(buff.readUtf8()); } catch(__) { bodyStr = ''; }
+                    }
+                } catch(_){ }
+            }
+        } catch(_){ }
+
+        var py = __genRequestsCode(method, url, headersObj, cookieStr, bodyStr, contentTypeStr);
+        var stackArr = __getStackArray(20);
+
+        LOG('🌐 捕获请求(OkHttp): ' + method + ' ' + url, { c: Color.Cyan });
+        LOG('🐍 ' + py, { c: Color.White });
+        printStack();
+
+        send({
+            type: 'fetch_request',
+            ts: Date.now(),
+            items: {
+                library: 'okhttp',
+                method: method,
+                url: url,
+                headers: headersObj,
+                cookies: cookieStr || null,
+                python: py,
+                body: bodyStr || null,
+                contentType: contentTypeStr || null,
+                stack: stackArr
+            }
+        });
+    } catch (e) {
+        LOG('⚠️ OkHttp 捕获失败: ' + e.message, { c: Color.Yellow });
+    }
+}
+
+function __installOkHttpHooks() {
+    var installedAny = false;
+    var candidates = ['okhttp3.RealCall', 'okhttp3.internal.connection.RealCall'];
+    for (var i = 0; i < candidates.length; i++) {
+        try {
+            var C = __useClass(candidates[i]);
+            if (C.execute) {
+                var execOver = C.execute.overload();
+                execOver.implementation = function() {
+                    try { __handleOkHttpCall(this); } catch(_){}
+                    return execOver.call(this);
+                };
+                installedAny = true;
+            }
+            if (C.enqueue) {
+                try {
+                    var enqOver = C.enqueue.overload('okhttp3.Callback');
+                    enqOver.implementation = function(cb) {
+                        try { __handleOkHttpCall(this); } catch(_){}
+                        return enqOver.call(this, cb);
+                    };
+                    installedAny = true;
+                } catch(_){ }
+            }
+        } catch (_) { }
+    }
+    if (installedAny) {
+        LOG('✅ OkHttp Hook 已启用', { c: Color.Green });
+    } else {
+        LOG('⚠️ 未找到 OkHttp RealCall 类', { c: Color.Yellow });
+    }
+}
+
+function __installOkHttp2Hooks() {
+    var installedAny = false;
+    var candidates = ['com.squareup.okhttp.RealCall'];
+    for (var i = 0; i < candidates.length; i++) {
+        try {
+            var C = __useClass(candidates[i]);
+            if (C.execute) {
+                var execOver = C.execute.overload();
+                execOver.implementation = function() {
+                    try { __handleOkHttpCall(this); } catch(_){}
+                    return execOver.call(this);
+                };
+                installedAny = true;
+            }
+            if (C.enqueue) {
+                try {
+                    var enqOver = C.enqueue.overload('com.squareup.okhttp.Callback');
+                    enqOver.implementation = function(cb) {
+                        try { __handleOkHttpCall(this); } catch(_){}
+                        return enqOver.call(this, cb);
+                    };
+                    installedAny = true;
+                } catch(_){ }
+            }
+        } catch (_){ }
+    }
+    if (installedAny) {
+        LOG('✅ OkHttp2 Hook 已启用', { c: Color.Green });
+    } else {
+        LOG('ℹ️ 未检测到 OkHttp2', { c: Color.Gray });
+    }
+}
+
+function __handleHttpUrlConnection(conn) {
+    try {
+        var method = '';
+        try { method = String(conn.getRequestMethod()); } catch(_){ }
+        var url = '';
+        try { url = String(conn.getURL().toString()); } catch(_){ }
+
+        var headersObj = {};
+        try {
+            var map = conn.getRequestProperties();
+            var es = map.entrySet();
+            var it = es.iterator();
+            while (it.hasNext()) {
+                var entry = it.next();
+                var kObj = entry.getKey();
+                var key = kObj ? String(kObj) : '';
+                if (!key) continue;
+                var list = entry.getValue();
+                var vals = [];
+                if (list) {
+                    var size = list.size();
+                    for (var i = 0; i < size; i++) { vals.push(String(list.get(i))); }
+                }
+                headersObj[key] = vals.join(', ');
+            }
+        } catch(_){ }
+
+        var cookieStr = '';
+        try { cookieStr = headersObj['Cookie'] || headersObj['cookie'] || ''; } catch(_){ }
+
+        if (__fetch_filter) {
+            var hay = url + ' ' + JSON.stringify(headersObj);
+            if (hay.indexOf(__fetch_filter) === -1) return;
+        }
+
+        var py = __genRequestsCode(method || 'GET', url, headersObj, cookieStr);
+        var stackArr = __getStackArray(20);
+
+        LOG('🌐 捕获请求(HttpURLConnection): ' + (method || 'GET') + ' ' + url, { c: Color.Cyan });
+        LOG('🐍 ' + py, { c: Color.White });
+        printStack();
+
+        send({
+            type: 'fetch_request',
+            ts: Date.now(),
+            items: {
+                library: 'httpurlconnection',
+                method: method || 'GET',
+                url: url,
+                headers: headersObj,
+                cookies: cookieStr || null,
+                python: py,
+                stack: stackArr
+            }
+        });
+    } catch (e) {
+        LOG('⚠️ HttpURLConnection 捕获失败: ' + e.message, { c: Color.Yellow });
+    }
+}
+
+function __installHttpURLConnectionHooks() {
+    try {
+        var HUC = __useClass('java.net.HttpURLConnection');
+        // getInputStream
+        try {
+            var gis = HUC.getInputStream.overload();
+            gis.implementation = function() {
+                try { __handleHttpUrlConnection(this); } catch(_){}
+                return gis.call(this);
+            };
+        } catch(_){ }
+        // getOutputStream
+        try {
+            var gos = HUC.getOutputStream.overload();
+            gos.implementation = function() {
+                try { __handleHttpUrlConnection(this); } catch(_){}
+                return gos.call(this);
+            };
+        } catch(_){ }
+        // connect()
+        try {
+            var connOver = HUC.connect.overload();
+            connOver.implementation = function() {
+                try { __handleHttpUrlConnection(this); } catch(_){}
+                return connOver.call(this);
+            };
+        } catch(_){ }
+        LOG('✅ HttpURLConnection Hook 已启用', { c: Color.Green });
+    } catch (e) {
+        LOG('⚠️ 未找到 HttpURLConnection 类: ' + e.message, { c: Color.Yellow });
+    }
+}
+
+function __installWebViewHooks() {
+    try {
+        var WV = __useClass('android.webkit.WebView');
+        // loadUrl(String)
+        try {
+            var l1 = WV.loadUrl.overload('java.lang.String');
+            l1.implementation = function(u) {
+                var url = String(u);
+                if (!__fetch_filter || (url + '').indexOf(__fetch_filter) !== -1) {
+                    var py = __genRequestsCode('GET', url, {}, null, null, null);
+                    var stackArr = __getStackArray(15);
+                    LOG('🌐 WebView.loadUrl: ' + url, { c: Color.Cyan });
+                    LOG('🐍 ' + py, { c: Color.White });
+                    printStack();
+                    send({ type: 'fetch_request', ts: Date.now(), items: { library: 'webview', method: 'GET', url: url, headers: {}, cookies: null, python: py, stack: stackArr } });
+                }
+                return l1.call(this, u);
+            };
+        } catch(_){ }
+        // loadUrl(String, Map)
+        try {
+            var l2 = WV.loadUrl.overload('java.lang.String', 'java.util.Map');
+            l2.implementation = function(u, m) {
+                var url = String(u);
+                var headersObj = {};
+                try {
+                    var it = m.entrySet().iterator();
+                    while (it.hasNext()) {
+                        var e = it.next();
+                        headersObj[String(e.getKey())] = String(e.getValue());
+                    }
+                } catch(_){ }
+                if (!__fetch_filter || (url + ' ' + JSON.stringify(headersObj)).indexOf(__fetch_filter) !== -1) {
+                    var py = __genRequestsCode('GET', url, headersObj, null, null, null);
+                    var stackArr = __getStackArray(15);
+                    LOG('🌐 WebView.loadUrl(headers): ' + url, { c: Color.Cyan });
+                    LOG('🐍 ' + py, { c: Color.White });
+                    printStack();
+                    send({ type: 'fetch_request', ts: Date.now(), items: { library: 'webview', method: 'GET', url: url, headers: headersObj, cookies: null, python: py, stack: stackArr } });
+                }
+                return l2.call(this, u, m);
+            };
+        } catch(_){ }
+        // loadDataWithBaseURL
+        try {
+            var l3 = WV.loadDataWithBaseURL.overload('java.lang.String','java.lang.String','java.lang.String','java.lang.String','java.lang.String');
+            l3.implementation = function(baseUrl, data, mime, enc, hist) {
+                var url = String(baseUrl || '');
+                if (url && (!__fetch_filter || url.indexOf(__fetch_filter) !== -1)) {
+                    var headersObj = { 'Content-Type': String(mime || '') + (enc ? ('; charset=' + enc) : '') };
+                    var py = __genRequestsCode('GET', url, headersObj, null, null, null);
+                    var stackArr = __getStackArray(10);
+                    LOG('🌐 WebView.loadDataWithBaseURL: ' + url, { c: Color.Cyan });
+                    LOG('🐍 ' + py, { c: Color.White });
+                    printStack();
+                    send({ type: 'fetch_request', ts: Date.now(), items: { library: 'webview', method: 'GET', url: url, headers: headersObj, cookies: null, python: py, stack: stackArr } });
+                }
+                return l3.call(this, baseUrl, data, mime, enc, hist);
+            };
+        } catch(_){ }
+        LOG('✅ WebView Hook 已启用', { c: Color.Green });
+    } catch (e) {
+        LOG('ℹ️ 未检测到 WebView: ' + e.message, { c: Color.Gray });
+    }
+}
+
+function __installVolleyHooks() {
+    try {
+        var RQ = __useClass('com.android.volley.RequestQueue');
+        var addOver = RQ.add.overload('com.android.volley.Request');
+        addOver.implementation = function(req) {
+            try {
+                var methodInt = 0;
+                try { methodInt = req.getMethod(); } catch(_){ }
+                var methods = ['GET','POST','PUT','DELETE','HEAD','OPTIONS','TRACE','PATCH'];
+                var method = methods[methodInt] || 'GET';
+                var url = '';
+                try { url = String(req.getUrl()); } catch(_){ }
+                var headersObj = {};
+                try {
+                    var map = req.getHeaders();
+                    var it = map.entrySet().iterator();
+                    while (it.hasNext()) {
+                        var e = it.next();
+                        headersObj[String(e.getKey())] = String(e.getValue());
+                    }
+                } catch(_){ }
+                var bodyStr = '';
+                var ct = '';
+                try { ct = String(req.getBodyContentType()); if (ct) { headersObj['Content-Type'] = headersObj['Content-Type'] || ct; } } catch(_){ }
+                try {
+                    var b = req.getBody();
+                    if (b) {
+                        var cs = __parseCharsetFromHeaders(headersObj, ct) || 'utf-8';
+                        bodyStr = __bytesToString(b, cs);
+                    }
+                } catch(_){ }
+
+                if (!__fetch_filter || (url + ' ' + JSON.stringify(headersObj)).indexOf(__fetch_filter) !== -1) {
+                    var py = __genRequestsCode(method, url, headersObj, headersObj['Cookie'] || headersObj['cookie'] || null, bodyStr, ct);
+                    var stackArr = __getStackArray(20);
+                    LOG('🌐 捕获请求(Volley): ' + method + ' ' + url, { c: Color.Cyan });
+                    LOG('🐍 ' + py, { c: Color.White });
+                    printStack();
+                    send({ type: 'fetch_request', ts: Date.now(), items: { library: 'volley', method: method, url: url, headers: headersObj, cookies: headersObj['Cookie'] || null, python: py, body: bodyStr || null, contentType: ct || null, stack: stackArr } });
+                }
+            } catch(_){ }
+            return addOver.call(this, req);
+        };
+        LOG('✅ Volley Hook 已启用', { c: Color.Green });
+    } catch (e) {
+        LOG('ℹ️ 未检测到 Volley: ' + e.message, { c: Color.Gray });
+    }
+}
+
+function __installApacheHttpClientHooks() {
+    var installed = false;
+    function hookClient(className) {
+        try {
+            var Cls = __useClass(className);
+            try {
+                var exec1 = Cls.execute.overload('org.apache.http.client.methods.HttpUriRequest');
+                exec1.implementation = function(request) {
+                    try {
+                        var method = '';
+                        try { method = String(request.getMethod()); } catch(_){ }
+                        var url = '';
+                        try { url = String(request.getURI().toString()); } catch(_){ }
+                        var headersObj = {};
+                        try {
+                            var hdrs = request.getAllHeaders();
+                            if (hdrs) {
+                                for (var i = 0; i < hdrs.length; i++) {
+                                    try { headersObj[String(hdrs[i].getName())] = String(hdrs[i].getValue()); } catch(__){}
+                                }
+                            }
+                        } catch(_){ }
+                        if (!__fetch_filter || (url + ' ' + JSON.stringify(headersObj)).indexOf(__fetch_filter) !== -1) {
+                            var py = __genRequestsCode(method || 'GET', url, headersObj, headersObj['Cookie'] || headersObj['cookie'] || null, null, headersObj['Content-Type'] || null);
+                            var stackArr = __getStackArray(20);
+                            LOG('🌐 捕获请求(ApacheHttpClient): ' + (method || 'GET') + ' ' + url, { c: Color.Cyan });
+                            LOG('🐍 ' + py, { c: Color.White });
+                            printStack();
+                            send({ type: 'fetch_request', ts: Date.now(), items: { library: 'apache_httpclient', method: method || 'GET', url: url, headers: headersObj, cookies: headersObj['Cookie'] || null, python: py, stack: stackArr } });
+                        }
+                    } catch(_){ }
+                    return exec1.call(this, request);
+                };
+                installed = true;
+            } catch(_){ }
+        } catch(_){ }
+    }
+    hookClient('org.apache.http.impl.client.InternalHttpClient');
+    if (!installed) hookClient('org.apache.http.impl.client.CloseableHttpClient');
+    if (installed) {
+        LOG('✅ Apache HttpClient Hook 已启用', { c: Color.Green });
+    } else {
+        LOG('ℹ️ 未检测到 Apache HttpClient', { c: Color.Gray });
+    }
+}
+
+function fetch(filterStr) {
+    try {
+        __fetch_filter = (filterStr && String(filterStr)) ? String(filterStr) : null;
+        // 通知Python端初始化日志文件
+        try { send({ type: 'fetch_start', ts: Date.now(), items: { filter: __fetch_filter } }); } catch(_){ }
+        Java.perform(function() {
+            if (!__fetch_installed) {
+                __installOkHttpHooks();
+                __installOkHttp2Hooks();
+                __installHttpURLConnectionHooks();
+                __installWebViewHooks();
+                __installVolleyHooks();
+                __installApacheHttpClientHooks();
+                __fetch_installed = true;
+            } else {
+                LOG('ℹ️ fetch 已启用，更新过滤条件: ' + (__fetch_filter || '(无)'), { c: Color.Cyan });
+            }
+        });
+        LOG('✅ fetch 已启动' + (__fetch_filter ? ' (过滤: ' + __fetch_filter + ')' : ''), { c: Color.Green });
+        return true;
+    } catch (e) {
+        LOG('❌ fetch 启动失败: ' + e.message, { c: Color.Red });
+        return false;
+    }
+}
+
 // ===== 帮助函数 =====
 function help() {
     LOG("\n📚 fridacli Hook工具帮助 (新版本)", { c: Color.Cyan });
@@ -538,6 +1104,7 @@ function help() {
         ["hookbase64", "创建Base64 Hook任务"],
         ["hookurl", "创建URL Hook任务"],
         ["hooktoast", "创建Toast Hook任务"],
+        ["fetch([filter])", "抓取网络请求，生成等价Python requests代码并保存日志，可选按字符串过滤"],
         ["help()", "显示此帮助"]
     ];
     
@@ -679,6 +1246,29 @@ global.help = help;
 global.LOG = LOG;
 global.Color = Color;
 global.printStack = printStack;
+global.printJavaCallStack = printJavaCallStack;
 global.findTragetClassLoader = findTragetClassLoader;
+global.fetch = fetch;
+
+// 提供 loadNativeSupport 便捷函数（如果 Native 模块已自动加载则提示已就绪）
+function loadNativeSupport() {
+    try {
+        var hasAnyNative =
+            (typeof nativeHookNativeFunction === 'function') ||
+            (typeof nativeFindModules === 'function') ||
+            (typeof nativeHookNetworkFunctions === 'function') ||
+            (typeof nativeHookDlopenFamily === 'function');
+        if (hasAnyNative) {
+            LOG("🟢 Native 支持已就绪", { c: Color.Green });
+            return true;
+        }
+        LOG("🟡 未检测到 Native 工具，请确认已加载 frida_native_common.js 或 frida_native/* 模块", { c: Color.Yellow });
+        return false;
+    } catch (e) {
+        LOG("❌ 检查 Native 支持失败: " + e.message, { c: Color.Red });
+        return false;
+    }
+}
+global.loadNativeSupport = loadNativeSupport;
 
 LOG("🚀 fridacli Java Hook工具集已加载 (新版本)!", { c: Color.Green });

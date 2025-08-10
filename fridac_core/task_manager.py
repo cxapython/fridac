@@ -10,7 +10,7 @@ from typing import Dict, Optional, List, Any
 from dataclasses import dataclass
 from enum import Enum
 
-from .logger import log_info, log_success, log_warning, log_error, get_console
+from .logger import log_info, log_success, log_warning, log_error, get_console, render_structured_event
 
 class TaskType(Enum):
     """任务类型枚举"""
@@ -108,17 +108,8 @@ class FridaTaskManager:
                         if isinstance(payload, dict):
                             if payload.get('task_id') == task_id:
                                 self._update_task_stats(task_id)
-                             # 结构化消息也进行友好输出
-                            try:
-                                from json import dumps as _dumps
-                                console = get_console()
-                                if console:
-                                    from rich.text import Text
-                                    console.print(Text(f"[#${task_id}] {_dumps(payload, ensure_ascii=False)}", style="cyan"))
-                                else:
-                                    log_info(f"[#${task_id}] { _dumps(payload, ensure_ascii=False) }")
-                            except Exception:
-                                log_info(f"[#${task_id}] {payload}")
+                            # 使用统一结构化渲染，并附带任务前缀
+                            render_structured_event(payload, task_id=task_id)
                         else:
                              # 普通文本日志（来自 LOG）
                             text = '' if payload is None else str(payload)
