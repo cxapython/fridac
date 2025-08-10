@@ -8,8 +8,8 @@ import os
 from .logger import log_error, log_debug, log_warning, log_info
 
 def create_frida_script():
-    """Create the Frida script with all our functions"""
-    # Try to find frida_common.js in multiple locations
+    """创建包含全部工具函数的 Frida 脚本"""
+    # 在多处路径尝试查找 frida_common_new.js
     possible_paths = [
         os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frida_common_new.js'),
         os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_common_new.js'),
@@ -33,7 +33,7 @@ def create_frida_script():
     with open(script_path, 'r', encoding='utf-8') as f:
         js_content = f.read()
     
-    # Load additional script modules
+    # 加载附加的脚本模块
     js_content += _load_native_hooks()
     js_content += _load_location_hooks()
     js_content += _load_advanced_tracer()
@@ -41,13 +41,13 @@ def create_frida_script():
     # js_content += _load_job_manager()
     # js_content += _load_job_commands()
     
-    # Add interactive shell initialization and Java.perform wrapper
+    # 添加交互式 Shell 初始化与 Java.perform 包装
     js_content = _wrap_with_java_perform(js_content)
     
     return js_content
 
 def _load_native_hooks():
-    """Load Native Hook tools"""
+    """加载 Native Hook 工具"""
     native_paths = [
         os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frida_native_common.js'),
         os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_native_common.js'),
@@ -77,7 +77,7 @@ def _load_native_hooks():
     return ""
 
 def _load_location_hooks():
-    """Load Location Hook tools"""
+    """加载定位类 Hook 工具"""
     location_paths = [
         os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frida_location_hooks_new.js'),
         os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_location_hooks_new.js'),
@@ -107,7 +107,7 @@ def _load_location_hooks():
     return ""
 
 def _load_advanced_tracer():
-    """Load Advanced Tracer tools"""
+    """加载高级追踪工具"""
     advanced_tracer_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_advanced_tracer.js')
     
     if os.path.exists(advanced_tracer_path):
@@ -124,7 +124,7 @@ def _load_advanced_tracer():
     return ""
 
 def _load_job_manager():
-    """Load Job Management System"""
+    """加载旧版任务管理系统（已禁用，仅保留以兼容）"""
     job_manager_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_job_manager.js')
     
     if os.path.exists(job_manager_path):
@@ -141,7 +141,7 @@ def _load_job_manager():
     return ""
 
 def _load_job_commands():
-    """Load Job Management Commands"""
+    """加载旧版任务管理命令（已禁用，仅保留以兼容）"""
     job_commands_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_job_commands.js')
     
     if os.path.exists(job_commands_path):
@@ -158,7 +158,7 @@ def _load_job_commands():
     return ""
 
 def _wrap_with_java_perform(js_content):
-    """Wrap JavaScript content with Java.perform and add shell initialization"""
+    """用 Java.perform 包裹 JavaScript 内容并添加 Shell 初始化"""
     
     wrapper_start = '''
 Java.perform(function() {

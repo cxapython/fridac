@@ -32,22 +32,22 @@ from .script_manager import create_frida_script
 from .task_manager import FridaTaskManager, TaskType, TaskStatus
 from .script_templates import ScriptTemplateEngine
 
-# History file for command history
+# 命令历史记录文件
 HISTORY_FILE = os.path.expanduser("~/.fridac_history")
 
 def setup_history():
-    """Setup command history and auto-completion"""
+    """设置命令历史与自动补全"""
     try:
         readline.read_history_file(HISTORY_FILE)
         readline.set_history_length(1000)
     except FileNotFoundError:
         pass
     
-    # Setup auto-completion
+    # 设置自动补全
     completer = FridacCompleter()
     readline.set_completer(completer.complete)
     
-    # Enable tab completion (libedit vs GNU readline 兼容)
+    # 启用 Tab 补全（兼容 libedit 与 GNU readline）
     if rlcompleter:
         try:
             doc = getattr(readline, "__doc__", "") or ""
@@ -66,7 +66,7 @@ def setup_history():
                 except Exception:
                     pass
     
-    # Set completion delimiters (don't break on these characters)
+    # 设置补全分隔符（这些字符不触发分词）
     readline.set_completer_delims(' \t\n`!@#$%^&*()=+[{]}\\|;:,<>?')
     
     def save_history():
@@ -78,7 +78,7 @@ def setup_history():
     atexit.register(save_history)
 
 class FridacSession:
-    """Frida session management class"""
+    """Frida 会话管理类"""
     
     def __init__(self):
         self.session = None
@@ -92,7 +92,7 @@ class FridacSession:
         self.script_engine = None
         
     def on_message(self, message, data):
-        """Handle messages from Frida script with enhanced logging"""
+        """处理来自 Frida 脚本的消息并增强日志展示"""
         console = get_console()
         
         if message['type'] == 'send':
@@ -118,7 +118,7 @@ class FridacSession:
                         else:
                             console.print(payload)
                     else:
-                        # 尝试作为JSON渲染
+                        # 尝试作为 JSON 渲染
                         import json
                         try:
                             console.print(payload)
@@ -132,9 +132,9 @@ class FridacSession:
             log_error("脚本错误: {}".format(message['description']))
     
     def connect_to_app(self, app_name, spawn_mode=False):
-        """Connect to target app"""
+        """连接到目标应用"""
         try:
-            # Get USB device with progress indicator
+            # 获取 USB 设备并显示进度
             console = get_console()
             
             if RICH_AVAILABLE and console:
@@ -153,19 +153,19 @@ class FridacSession:
             log_success("连接到设备: {}".format(self.device))
             
             if spawn_mode:
-                # Spawn mode
+                # Spawn 模式
                 log_info("启动应用: {}".format(app_name))
                 pid = self.device.spawn([app_name])
                 self.target_process = self.device.attach(pid)
                 self.device.resume(pid)
                 log_success("应用已启动 (PID: {})".format(pid))
             else:
-                # Attach mode  
+                # Attach 模式
                 log_info("连接到应用: {}".format(app_name))
                 self.target_process = self.device.attach(app_name)
                 log_success("已连接到运行中的应用")
             
-            # Load and create script
+            # 加载并创建脚本
             log_info("正在加载 Frida 脚本...")
             js_script = create_frida_script()
             if not js_script:
@@ -193,22 +193,22 @@ class FridacSession:
             return False
     
     def execute_js(self, js_code):
-        """Execute JavaScript code with enhanced error handling"""
+        """执行 JavaScript 代码（包含增强的错误处理）"""
         if not self.script:
             log_error("没有活动的脚本会话")
             return
             
         try:
-            # Handle special exit commands
+            # 处理特殊退出命令
             if js_code.strip().lower() in ['q', 'quit', 'exit']:
                 self.running = False
                 return
             
-            # Show what we're executing for complex commands
+            # 对复杂命令做执行前提示
             if len(js_code) > 50 or '\n' in js_code:
                 log_debug("执行 JavaScript: {}...".format(js_code[:50]))
             
-            # Execute the JavaScript code through RPC
+            # 通过 RPC 执行 JavaScript 代码
             result = self.script.exports.eval(js_code)
             
         except Exception as e:
@@ -217,7 +217,7 @@ class FridacSession:
     def _setup_task_manager(self):
         """初始化任务管理器"""
         try:
-            # 传递session信息给任务管理器
+            # 传递会话信息给任务管理器
             self.task_manager = FridaTaskManager(self.target_process)
             
             # 初始化脚本模板引擎
@@ -339,7 +339,7 @@ class FridacSession:
         self.task_manager.show_stats()
     
     def disconnect(self):
-        """Disconnect from target with graceful cleanup"""
+        """从目标断开并做善后清理"""
         self.running = False
         
         # 清理所有任务
@@ -364,19 +364,19 @@ class FridacSession:
         log_success("已断开连接")
 
 def run_interactive_session(session):
-    """Run the interactive session loop"""
+    """运行交互式会话主循环"""
     console = get_console()
     
-    # Setup command history and completion
+    # 设置历史与补全
     setup_history()
     
-    # Show beautiful interactive mode information
+    # 显示交互模式提示信息
     if RICH_AVAILABLE and console:
         _show_rich_interactive_info()
     else:
         _show_basic_interactive_info()
     
-    # Interactive loop
+    # 交互循环
     while session.running:
         try:
             # 始终使用标准输入以启用 readline Tab 补全

@@ -23,7 +23,7 @@ except ImportError:
 from .logger import log_warning, log_error, log_success, log_info, get_console
 
 def detect_python_environment():
-    """Detect current Python environment and corresponding Frida version"""
+    """检测当前 Python 环境及对应的 Frida 版本"""
     python_info = {
         'version': 'unknown',
         'executable': sys.executable,
@@ -32,11 +32,11 @@ def detect_python_environment():
     }
     
     try:
-        # Get Python version
+        # 获取 Python 版本
         python_version = "{}.{}.{}".format(sys.version_info.major, sys.version_info.minor, sys.version_info.micro)
         python_info['version'] = python_version
         
-        # Check if pyenv is available and active
+        # 检查 pyenv 是否可用且已激活
         pyenv_available = False
         try:
             pyenv_result = subprocess.run(['pyenv', 'version'], 
@@ -48,35 +48,35 @@ def detect_python_environment():
                 python_info['using_pyenv'] = True
                 pyenv_available = True
         except FileNotFoundError:
-            # pyenv not found, use system python3
+            # 未找到 pyenv，则使用系统 python3
             pass
         except:
             pass
         
-        # Determine which Python to use for Frida
+        # 决定用于调用 Frida 的 Python 可执行文件
         python_executable = sys.executable
         if not pyenv_available:
-            # Try to use python3 if available and current is not python3
+            # 若存在 python3 且当前不是 python3，优先使用 python3
             try:
-                # Check if python3 is available
+                # 检查 python3 是否可用
                 python3_result = subprocess.run(['python3', '--version'], 
                                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                               universal_newlines=True)
                 if python3_result.returncode == 0:
-                    # Use python3 as preferred executable
+                    # 选择 python3 作为首选可执行文件
                     python_executable = 'python3'
                     python_info['executable'] = python_executable
-                    # Update version info from python3
+                    # 使用 python3 的输出更新版本信息
                     version_output = python3_result.stdout.strip()
                     if 'Python' in version_output:
                         version_parts = version_output.split()[1].split('.')
                         if len(version_parts) >= 3:
                             python_info['version'] = "{}.{}.{}".format(version_parts[0], version_parts[1], version_parts[2])
             except:
-                # Fallback to current executable
+                # 回退到当前可执行文件
                 pass
         
-        # Get Frida version using the determined executable
+        # 使用确定的可执行文件获取 Frida 版本
         frida_commands = [
             [python_executable, '-m', 'frida', '--version'],
             [python_executable, '-m', 'frida_tools.frida', '--version'],
@@ -100,22 +100,22 @@ def detect_python_environment():
     return python_info
 
 def get_frida_version():
-    """Get current Frida version"""
+    """获取当前 Frida 版本"""
     try:
-        # Use environment detection to get the correct Python executable
+        # 通过环境检测获取正确的 Python 可执行文件
         env_info = detect_python_environment()
         return env_info.get('frida_version', 'unknown')
     except:
         return "unknown"
 
 def get_frontmost_app():
-    """Get the frontmost (current foreground) application"""
+    """获取前台（当前焦点）应用"""
     try:
         if not FRIDA_AVAILABLE:
             log_error("Frida 未安装或不可用，无法获取前台应用")
             return None, None
         device = frida.get_usb_device()
-        # 某些平台/设备不支持该API，做兼容处理
+        # 某些平台/设备不支持该 API，做兼容处理
         try:
             frontmost_app = device.get_frontmost_application()
         except Exception:
@@ -128,13 +128,13 @@ def get_frontmost_app():
         return None, None
 
 def find_target_app():
-    """Find the target application automatically"""
+    """自动查找目标应用"""
     try:
-        # Detect environment to get the correct Python executable
+        # 通过环境检测获取合适的 Python 可执行文件
         env_info = detect_python_environment()
         python_executable = env_info.get('executable', sys.executable)
         
-        # Get list of running apps using determined Python executable
+        # 使用确定的 Python 可执行文件获取运行中应用列表
         frida_ps_commands = [
             [python_executable, '-m', 'frida_tools.ps', '-Ua'],
             [python_executable, '-m', 'frida_tools.frida_ps', '-Ua'],
@@ -156,7 +156,7 @@ def find_target_app():
             log_error("无法获取应用列表，请检查 Frida 安装")
             return None
         
-        lines = result.stdout.strip().split('\n')[1:]  # Skip header
+        lines = result.stdout.strip().split('\n')[1:]  # 跳过表头
         
         if not lines:
             log_error("没有找到运行的应用程序")
@@ -166,16 +166,16 @@ def find_target_app():
         apps = []
         for line in lines:
             line = line.strip()
-            if not line:  # Skip empty lines
+            if not line:  # 跳过空行
                 continue
-            # frida-ps -Ua output: PID, Name, Identifier
-            # Split into at most 3 parts to handle spaces in names
+            # frida-ps -Ua 输出: PID, Name, Identifier
+            # 最多切成 3 段以兼容名称中的空格
             parts = line.split(None, 2)
             if len(parts) >= 3:
                 pid = parts[0]
                 name = parts[1]
                 identifier = parts[2]
-                # Validate PID is numeric
+                # 校验 PID 为数字
                 if pid.isdigit():
                     apps.append((pid, name, identifier))
         
@@ -212,11 +212,11 @@ def _select_app_from_list(apps):
         console.print(app_table)
         console.print()
         
-        # Auto-select if only one app, otherwise ask user
+        # 若仅有一个应用则自动选择，否则提示用户
         if len(apps) == 1:
             selected_app = apps[0]
             log_success("自动选择: {} {}".format(selected_app[1], selected_app[2]))
-            return selected_app[2]  # Return identifier (package name)
+            return selected_app[2]  # 返回包名（identifier）
         else:
             while True:
                 try:
@@ -245,17 +245,17 @@ def _select_app_from_list(apps):
                     log_info("操作取消")
                     return None
     else:
-        # Fallback to basic mode
+        # 回退到基础模式
         from .logger import log_info
         log_info("可用的应用程序:")
         for i, (pid, name, identifier) in enumerate(apps, 1):
             print("  [{}] {} {} (PID: {})".format(i, name, identifier, pid))
         
-        # Auto-select if only one app, otherwise ask user
+        # 若仅有一个应用则自动选择，否则提示用户
         if len(apps) == 1:
             selected_app = apps[0]
             log_success("自动选择: {} {}".format(selected_app[1], selected_app[2]))
-            return selected_app[2]  # Return identifier (package name)
+            return selected_app[2]  # 返回包名（identifier）
         else:
             while True:
                 try:
@@ -279,27 +279,27 @@ def _select_app_from_list(apps):
                     return None
 
 def show_environment_info(env_info):
-    """Display environment information"""
+    """显示环境信息"""
     console = get_console()
     
     if RICH_AVAILABLE and console:
-        # Create environment info table
+        # 创建环境信息表
         env_table = Table(title="🔧 环境信息", box=SIMPLE, show_header=True, header_style="bold blue")
         env_table.add_column("组件", style="cyan", min_width=10)
         env_table.add_column("版本/路径", style="green", min_width=30)
         env_table.add_column("状态", style="yellow", min_width=15)
         
-        # Python info
+        # Python 信息
         python_status = "✅ 正常" if env_info['version'] != 'unknown' else "❌ 异常"
         env_table.add_row("Python", f"{env_info['version']} ({env_info['executable']})", python_status)
         
-        # Pyenv info
+        # pyenv 信息
         if env_info.get('using_pyenv') and 'pyenv_version' in env_info:
             env_table.add_row("pyenv", env_info['pyenv_version'], "✅ 激活")
         else:
             env_table.add_row("pyenv", "系统 Python", "⚪ 未使用")
         
-        # Frida info
+        # Frida 信息
         frida_status = "✅ 可用" if env_info['frida_version'] != 'unknown' else "❌ 未安装"
         env_table.add_row("Frida", env_info['frida_version'], frida_status)
         

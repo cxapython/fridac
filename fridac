@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-fridac - Enhanced Frida CLI tool with interactive JavaScript shell (Modular Version)
+fridac - 增强版 Frida CLI 工具，带交互式 JavaScript Shell（模块化版本）
 
-Usage:
-  fridac                              # Auto-attach to frontmost app (smart mode)
-  fridac -a                           # Show apps list for selection
-  fridac -f com.example.app           # Spawn app and attach (equivalent to: frida -U -f com.example.app)
-  fridac -p com.example.app           # Attach to specific package (equivalent to: frida -U com.example.app)
-  fridac --spawn com.example.app      # Spawn mode (same as -f)
+用法:
+  fridac                              # 智能模式自动附加到前台应用
+  fridac -a                           # 显示应用列表供选择
+  fridac -f com.example.app           # 以 Spawn 模式启动并附加（等同 frida -U -f com.example.app）
+  fridac -p com.example.app           # 附加到指定包（等同 frida -U com.example.app）
+  fridac --spawn com.example.app      # Spawn 模式（同 -f）
 
-Features:
-- Interactive JavaScript shell with auto-completion
-- Automatic device detection and connection
-- Smart package name handling
-- Built-in tracing and debugging functions
-- Automatic task tracking system
-- Rich UI support
+特性:
+- 带自动补全的交互式 JavaScript Shell
+- 自动设备检测与连接
+- 智能包名处理
+- 内置追踪与调试功能
+- 自动任务追踪系统
+- Rich UI 支持
 
-Automatically detects pyenv Python version and uses corresponding Frida:
+自动检测 pyenv 的 Python 版本并选择对应的 Frida:
 - Python 3.6.8 -> Frida 14.x
 - Python 3.8.2 -> Frida 16.x
 """
@@ -27,7 +27,7 @@ import os
 import argparse
 import signal
 
-# Add the fridac_core package to Python path
+# 将 fridac_core 包加入 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fridac_core.logger import show_banner, log_info, log_success, log_error, log_warning
@@ -41,21 +41,21 @@ from fridac_core.environment import (
 from fridac_core.session import FridacSession, run_interactive_session
 
 def run_frida_session(spawn_mode=False, target_package=None, force_show_apps=False):
-    """Run Frida session with interactive shell"""
+    """运行 Frida 会话（带交互式 Shell）"""
     
     if force_show_apps or not target_package:
-        # Find target app interactively
+        # 交互式查找目标应用
         target_app = find_target_app()
         if not target_app:
             return
     else:
-        # Use specified package
+        # 使用指定的包名
         target_app = target_package
         log_info("使用指定的包名: {}".format(target_app))
     
     session = FridacSession()
     
-    # Setup signal handler for clean exit
+    # 安装信号处理器以优雅退出
     def signal_handler(sig, frame):
         log_info("正在退出...")
         session.disconnect()
@@ -63,18 +63,18 @@ def run_frida_session(spawn_mode=False, target_package=None, force_show_apps=Fal
     
     signal.signal(signal.SIGINT, signal_handler)
     
-    # Connect to app
+    # 连接到应用
     if not session.connect_to_app(target_app, spawn_mode):
         return
     
-    # Run interactive session
+    # 进入交互式会话
     run_interactive_session(session)
     
-    # Clean up
+    # 清理
     session.disconnect()
 
 def main():
-    """Main function"""
+    """主函数"""
     parser = argparse.ArgumentParser(
         description='fridac - Enhanced Frida CLI tool with interactive JavaScript shell',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -105,24 +105,24 @@ Examples:
     
     args = parser.parse_args()
     
-    # Determine target package and mode
+    # 决定目标包和运行模式
     target_package = None
     spawn_mode = False
     force_show_apps = False
     
-    if args.package:  # -f com.example.app
+    if args.package:  # -f com.example.app（以 Spawn 模式启动并附加）
         target_package = args.package
         spawn_mode = True
-    elif args.spawn:  # --spawn com.example.app
+    elif args.spawn:  # --spawn com.example.app（Spawn 模式）
         target_package = args.spawn
         spawn_mode = True
-    elif args.attach_package:  # -p com.example.app
+    elif args.attach_package:  # -p com.example.app（直接附加到已运行应用）
         target_package = args.attach_package
         spawn_mode = False
-    elif args.apps:  # -a (show apps list)
+    elif args.apps:  # -a（显示应用列表）
         force_show_apps = True
     else:
-        # Default behavior: try to attach to frontmost app
+        # 默认行为：尝试附加到前台应用
         frontmost_id, frontmost_name = get_frontmost_app()
         if frontmost_id:
             target_package = frontmost_id
@@ -133,10 +133,10 @@ Examples:
             log_info("没有检测到前台应用，显示应用列表...")
             force_show_apps = True
     
-    # Detect and display Python environment info
+    # 检测并显示 Python 环境信息
     env_info = detect_python_environment()
     
-    # Show beautiful banner and environment info
+    # 显示 Banner 与环境信息
     show_banner()
     show_environment_info(env_info)
     

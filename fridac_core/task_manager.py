@@ -75,17 +75,17 @@ class FridaTaskManager:
     def create_task(self, task_type: TaskType, target: str, script_source: str, 
                    description: str = "", options: Dict[str, Any] = None) -> int:
         """
-        创建新的任务 (独立Script)
+        创建新的任务（独立脚本）
         
         Args:
             task_type: 任务类型
             target: Hook目标 (类名、方法名等)
-            script_source: JavaScript脚本源码
+            script_source: JavaScript 脚本源码
             description: 任务描述
             options: 任务选项
             
         Returns:
-            任务ID，失败返回-1
+            任务 ID，失败返回 -1
         """
         if options is None:
             options = {}
@@ -94,21 +94,21 @@ class FridaTaskManager:
         self.next_task_id += 1
         
         try:
-            # 创建独立的Script (重用主session以避免重复attach)
+            # 创建独立脚本（重用主 session 以避免重复 attach）
             script_source_with_id = script_source.replace('var TASK_ID = 0;', f'var TASK_ID = {task_id};')
             script = self.main_session.create_script(script_source_with_id)
             
-            # 设置消息处理 (可以后续扩展)
+            # 设置消息处理（可扩展）
             def on_message(message, data):
                 try:
                     msg_type = message.get('type')
                     if msg_type == 'send':
                         payload = message.get('payload')
-                        # 任务统计：识别带task_id的结构化消息
+                        # 任务统计：识别带 task_id 的结构化消息
                         if isinstance(payload, dict):
                             if payload.get('task_id') == task_id:
                                 self._update_task_stats(task_id)
-                            # 结构化消息也进行友好输出
+                             # 结构化消息也进行友好输出
                             try:
                                 from json import dumps as _dumps
                                 console = get_console()
@@ -120,7 +120,7 @@ class FridaTaskManager:
                             except Exception:
                                 log_info(f"[#${task_id}] {payload}")
                         else:
-                            # 普通文本日志（来自 LOG）
+                             # 普通文本日志（来自 LOG）
                             text = '' if payload is None else str(payload)
                             console = get_console()
                             if console:
@@ -174,7 +174,7 @@ class FridaTaskManager:
     
     def kill_task(self, task_id: int) -> bool:
         """
-        终止指定任务 (完全清理)
+        终止指定任务（完全清理）
         
         Args:
             task_id: 任务ID
@@ -189,11 +189,11 @@ class FridaTaskManager:
         task = self.tasks[task_id]
         
         try:
-            # 卸载脚本 - 这会完全清理所有Hook
+            # 卸载脚本 - 这会完全清理所有 Hook
             if task.script_handle:
                 task.script_handle.unload()
             
-            # 注意：我们重用主session，所以这里不需要detach session
+            # 注意：重用主 session，无需在此处 detach session
             
             # 更新状态
             task.status = TaskStatus.CANCELLED
@@ -274,13 +274,13 @@ class FridaTaskManager:
             task_id: 任务ID
             
         Returns:
-            任务信息，不存在返回None
+            任务信息，不存在返回 None
         """
         return self.tasks.get(task_id)
     
     def show_tasks(self, status_filter: Optional[TaskStatus] = None):
         """
-        显示任务列表 (格式化输出)
+        显示任务列表（格式化输出）
         
         Args:
             status_filter: 可选的状态过滤器
@@ -345,7 +345,7 @@ class FridaTaskManager:
     
     def cleanup(self):
         """
-        清理所有任务 (程序退出时调用)
+        清理所有任务（程序退出时调用）
         """
         if not self.tasks:
             return

@@ -17,7 +17,7 @@ except ImportError:
 from .logger import get_console
 
 class FridacCompleter:
-    """Enhanced auto-completion for fridac commands with rich display"""
+    """fridac 命令的增强自动补全（支持 rich 展示）"""
     
     def __init__(self):
         # Available functions for completion with descriptions and examples
@@ -130,7 +130,7 @@ class FridacCompleter:
         }
     
     def show_completion_help(self):
-        """Display beautiful completion help using rich"""
+        """使用 rich 显示美观的补全帮助"""
         if not RICH_AVAILABLE:
             return
             
@@ -200,7 +200,7 @@ class FridacCompleter:
         console.print()
     
     def complete(self, text, state):
-        """Enhanced completion with rich pattern matching"""
+        """带模式匹配的增强补全"""
         if state == 0:
             # First time this text is completed
             self.matches = []
