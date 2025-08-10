@@ -1,4 +1,4 @@
-# 🚀 fridacli - 专业级 Frida Hook 工具集
+# 🚀 fridacli - 专业级 Frida Hook 工具集（2024 新任务系统 | 已在 Python 3.8 验证）
 
 一个集成了 **Java Hook**、**Native Hook** 和 **定位Hook** 的强大 Frida CLI 工具，提供交互式调试环境和智能应用管理功能。
 
@@ -11,8 +11,8 @@
 - 🔧 **强大Native Hook工具** - SO分析、加密算法Hook、网络监控
 - 📍 **精准定位Hook** - Base64、Toast、HashMap等常用组件Hook
 - 🔥 **高级追踪功能** - 基于r0tracer的反调试绕过、批量Hook、对象字段检查
-- 📋 **任务管理系统** - 参考objection设计的Hook任务管理，支持jobs、kill、pause等操作
-- 🤖 **自动任务追踪** - 所有Hook函数自动注册为可管理任务，按执行顺序分配ID
+- 📋 **任务管理系统（新）** - 每个 Hook 独立脚本任务，killall 真正清理、无残留
+- 🤖 **自测与自动任务** - 提供 `selftest_all` 一键验证，命中日志以 [#任务ID] 标记
 - 🚀 **自动环境检测** - 智能检测Python和Frida版本
 - 🎨 **Rich界面** - 美观的表格显示和彩色日志输出
 
@@ -55,27 +55,27 @@ python3 fridac --help
 
 ## 💡 使用方法
 
-### 基本命令
+### 基本命令（建议使用 Python 3.8 前台启动）
 
 ```bash
 # 🎯 智能模式 - 自动连接前台应用
-fridac
+python3.8 /Users/chennan/fridac/fridac
 
 # 📱 应用选择 - 显示应用列表供选择
-fridac -a
+python3.8 /Users/chennan/fridac/fridac -a
 
 # 🚀 启动模式 - 启动指定应用并连接
-fridac -f com.example.app
-fridac --spawn com.example.app
+python3.8 /Users/chennan/fridac/fridac -f com.example.app
+python3.8 /Users/chennan/fridac/fridac --spawn com.example.app
 
 # 🔗 附加模式 - 连接到已运行的应用
-fridac -p com.example.app
+python3.8 /Users/chennan/fridac/fridac -p com.example.app
 
 # ℹ️ 版本信息
-fridac --version
+python3.8 /Users/chennan/fridac/fridac --version
 ```
 
-### 交互式使用
+### 交互式使用（新任务命令 + 自测）
 
 连接成功后，您将进入功能强大的交互式环境：
 
@@ -83,16 +83,15 @@ fridac --version
 // 📚 查看完整帮助
 help()
 
-// ⚡ 一键启用所有Hook
-enableAllHooks(1)          // Java层定位Hook
-nativeEnableAllHooks(1)    // Native层全套Hook
+// ⚡ 一键自测（定位Hook全套，自动触发并打印命中）
+selftest_all
 
 // 🎯 智能Hook - 自动识别Java/Native
 smartTrace('com.example.MainActivity')  // Java类
 smartTrace('malloc', {showArgs: true})  // Native函数
 ```
 
-## 🔧 完整函数列表
+## 🔧 完整函数列表（命令行风格，括号可选）
 
 ### ☕ Java层Hook函数
 
@@ -107,7 +106,7 @@ smartTrace('malloc', {showArgs: true})  // Native函数
 | `findTargetClassLoader()` | 🔧 查找目标类加载器 | `findTargetClassLoader('com.example.Class')` |
 | `findStrInMap()` | 🗺️ 监控HashMap查找key对应value | `findStrInMap('password', 1)` |
 
-### 📍 定位Hook函数
+### 📍 定位Hook函数（新任务系统）
 
 | 函数名 | 描述 | 使用示例 |
 |--------|------|----------|
@@ -122,7 +121,7 @@ smartTrace('malloc', {showArgs: true})  // Native函数
 | `hookFileOperations()` | 📁 Hook 文件操作 | `hookFileOperations(1)` |
 | `hookLog()` | 📜 Hook Log输出 | `hookLog(1)` |
 | `hookURL()` | 🌐 Hook URL请求 | `hookURL(1)` |
-| `enableAllHooks()` | 🚀 启用所有定位Hook | `enableAllHooks(1)` |
+| `hookFileOperations()` | 📁 Hook 文件操作 | `hookFileOperations(1)` |
 
 ### 🔧 Native层Hook函数
 
@@ -193,20 +192,14 @@ android.app.*     // Android应用框架
 
 ## 🔍 实战案例
 
-### 案例1: 快速调试前台应用
+### 案例1: 快速调试前台应用（新任务系统）
 
 ```bash
 # 自动连接前台应用
 fridac
 
-# 一键启用所有Hook (自动创建任务)
-fridac> enableAllHooks(1)
-🤖 自动注册任务 #1: 自动追踪: enableAllHooks(1)
-✅ 已启用所有定位Hook (任务ID: #1)
-
-fridac> nativeEnableAllHooks(1)
-🤖 自动注册任务 #2: 自动追踪: nativeEnableAllHooks(1)
-✅ 已启用所有Native Hook (任务ID: #2)
+fridac> selftest_all
+✅ 自动创建并触发 url/log/base64/jsonobject/hashmap/arraylist/fileoperations
 
 # 智能跟踪 (自动创建任务)
 fridac> smartTrace('Login')
@@ -408,12 +401,12 @@ fridac> traceClass('com.example.MainActivity')
 ✅ 成功Hook了 15/20 个方法 (任务ID: #3)
 
 // 📋 查看所有任务 - 现在可以看到刚才的Hook了！
-fridac> jobs()
-📋 Hook 任务列表
-================================================================================
-[#1] [active] 自动追踪: hookLog(0)                    📍定位Hook    [5次命中] 2分钟前
-[#2] [active] 自动追踪: hookBase64(1)                 📍定位Hook    [3次命中] 1分钟前  
-[#3] [active] 自动追踪: hookAllMethodsInJavaClass('com.example.MainActivity')  🏛️类Hook  [15次命中] 刚刚
+fridac> tasks
+📋 任务列表（示例）
+ID  类型            状态     目标            创建时间
+1   location_hook   running  url             12:00:01
+2   location_hook   running  log             12:00:02
+3   location_hook   running  base64          12:00:02
 
 // ✅ 可以正常管理任务
 fridac> kill(1)

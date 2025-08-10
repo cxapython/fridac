@@ -9,9 +9,9 @@ fridacli 是一个专业级的 Frida Hook 工具集，提供增强的交互式 J
 ## 核心文件结构
 
 - **[fridac](mdc:fridac)** - 主程序CLI工具，Python实现，提供交互环境和自动补全
-- **[frida_common.js](mdc:frida_common.js)** - Java Hook工具集，包含类跟踪、方法Hook等核心功能
-- **[frida_native_common.js](mdc:frida_native_common.js)** - Native Hook工具集，所有函数以`native`前缀命名
-- **[frida_location_hooks.js](mdc:frida_location_hooks.js)** - 定位Hook工具集，包含Base64、Toast、HashMap等组件Hook
+- **[frida_common_new.js](mdc:frida_common_new.js)** - Java Hook工具集，包含类跟踪、方法Hook等核心功能（新版本）
+- **[frida_location_hooks_new.js](mdc:frida_location_hooks_new.js)** - 定位Hook工具集，包含Base64、Toast、HashMap等组件Hook（新版本）
+- **[fridac_core/](mdc:fridac_core/)** - 核心Python模块目录
 - **[README.md](mdc:README.md)** - 完整的用户文档和函数参考
 
 ## 关键特性
@@ -26,12 +26,18 @@ fridacli 是一个专业级的 Frida Hook 工具集，提供增强的交互式 J
 - 优雅的回退机制
 - 支持复杂的Android应用结构
 
-### 3. 增强的调试信息
+### 3. 新任务管理系统（2024年重构）
+- **基于Script隔离**：每个Hook任务对应独立的Frida Script
+- **真正的清理**：使用 `script.unload()` 完全恢复Hook状态
+- **统一管理**：Python端 [FridaTaskManager](mdc:fridac_core/task_manager.py) 负责生命周期管理
+- **模板引擎**：[ScriptTemplateEngine](mdc:fridac_core/script_templates.py) 生成独立脚本
+
+### 4. 增强的调试信息
 - 彩色日志输出
 - 详细的错误信息
 - ClassLoader类型和文件路径显示
 
-### 4. 专业级用户体验
+### 5. 专业级用户体验
 - Tab自动补全
 - 命令历史
 - Rich表格显示
@@ -40,16 +46,26 @@ fridacli 是一个专业级的 Frida Hook 工具集，提供增强的交互式 J
 ## 架构原则
 
 1. **模块化设计** - 功能按用途分离到不同JS文件
-2. **向下兼容** - 支持Python 3.6.8+和旧版Frida
-3. **优雅降级** - Rich库等可选依赖的处理
-4. **智能检测** - 自动环境检测和配置
-5. **专业输出** - 结构化的日志和调试信息
+2. **Script隔离** - 每个任务独立Script，避免相互干扰
+3. **向下兼容** - 支持Python 3.6.8+和旧版Frida
+4. **优雅降级** - Rich库等可选依赖的处理
+5. **智能检测** - 自动环境检测和配置
+6. **专业输出** - 结构化的日志和调试信息
 
-## 最近的重要修复
+## 最近的重要重构（2024年）
 
-1. **smartTrace函数未定义错误** - 修复RPC导出问题
-2. **ClassLoader支持增强** - 添加动态类加载支持  
-3. **路径信息显示** - 增加详细的文件来源信息
-4. **智能识别逻辑优化** - 改进类vs方法的判断逻辑
+### 任务管理系统完全重写
+- **问题**：旧系统`killall`无法真正清理Hook，导致残留
+- **解决方案**：实现基于Frida Script隔离的新架构
+- **核心改进**：
+  - 每个Hook命令创建独立Script任务
+  - `script.unload()` 确保完全清理
+  - Python端统一任务生命周期管理
+  - 支持17种Hook类型的独立任务
 
-这些修复确保了fridacli能够处理现代Android应用的复杂加载机制，特别是插件化、热修复和加固应用。
+### 文件架构升级
+- **新版文件**：`frida_common_new.js`, `frida_location_hooks_new.js`
+- **移除依赖**：完全清除旧的`HookJobManager`系统
+- **命令更新**：新命令格式（如`hookbase64`替代`hookBase64()`）
+
+这些重构确保了fridacli能够处理现代Android应用的复杂加载机制，特别是插件化、热修复和加固应用。

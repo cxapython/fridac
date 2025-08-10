@@ -5,7 +5,12 @@ fridac 环境检测和配置模块
 
 import sys
 import subprocess
-import frida
+try:
+    import frida
+    FRIDA_AVAILABLE = True
+except ImportError:
+    frida = None
+    FRIDA_AVAILABLE = False
 
 try:
     from rich.console import Console
@@ -15,7 +20,7 @@ try:
 except ImportError:
     RICH_AVAILABLE = False
 
-from .logger import log_warning, log_error, log_success, get_console
+from .logger import log_warning, log_error, log_success, log_info, get_console
 
 def detect_python_environment():
     """Detect current Python environment and corresponding Frida version"""
@@ -106,10 +111,17 @@ def get_frida_version():
 def get_frontmost_app():
     """Get the frontmost (current foreground) application"""
     try:
+        if not FRIDA_AVAILABLE:
+            log_error("Frida 未安装或不可用，无法获取前台应用")
+            return None, None
         device = frida.get_usb_device()
-        frontmost_app = device.get_frontmost_application()
-        if frontmost_app and frontmost_app.identifier:
-            return frontmost_app.identifier, frontmost_app.name
+        # 某些平台/设备不支持该API，做兼容处理
+        try:
+            frontmost_app = device.get_frontmost_application()
+        except Exception:
+            frontmost_app = None
+        if frontmost_app and getattr(frontmost_app, 'identifier', None):
+            return frontmost_app.identifier, getattr(frontmost_app, 'name', None)
         return None, None
     except Exception as e:
         log_error("获取前台应用失败: {}".format(e))

@@ -97,24 +97,24 @@ var Color = {
 };
 
 var LOG = function (input, kwargs) {
-    kwargs = kwargs || {};
-    var logLevel = kwargs['l'] || 'log';
-    var colorPrefix = '\x1b[3';
-    var colorSuffix = 'm';
-    
-    if (typeof input === 'object') {
-        if (input instanceof ArrayBuffer || input instanceof Uint8Array) {
-            input = '[字节数据: ' + input.byteLength + ' bytes]';
+    // 统一通过 send() 输出，避免ANSI颜色残留导致的“m/undefined”噪音
+    try {
+        var text;
+        if (input === null || typeof input === 'undefined') {
+            text = '';
+        } else if (typeof input === 'object') {
+            if (input instanceof ArrayBuffer || input instanceof Uint8Array) {
+                text = '[字节数据]';
+            } else {
+                try { text = JSON.stringify(input); } catch (_) { text = String(input); }
+            }
         } else {
-            input = JSON.stringify(input, null, kwargs['i'] ? 2 : null);
+            text = String(input);
         }
+        send(text);
+    } catch (e) {
+        try { send(String(input)); } catch (_) {}
     }
-    
-    if (kwargs['c']) {
-        input = colorPrefix + kwargs['c'] + colorSuffix + input + Color.RESET;
-    }
-    
-    console[logLevel](input);
 };
 
 // ============= 栈跟踪工具 =============

@@ -11,11 +11,11 @@ def create_frida_script():
     """Create the Frida script with all our functions"""
     # Try to find frida_common.js in multiple locations
     possible_paths = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frida_common.js'),
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_common.js'),
-        os.path.join(os.path.expanduser('~'), 'fridaproject', 'frida_common.js'),
-        'frida_common.js',  # Absolute fallback
-        './frida_common.js'  # Current directory
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frida_common_new.js'),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_common_new.js'),
+        os.path.join(os.path.expanduser('~'), 'fridaproject', 'frida_common_new.js'),
+        'frida_common_new.js',  # Absolute fallback
+        './frida_common_new.js'  # Current directory
     ]
     
     script_path = None
@@ -25,7 +25,7 @@ def create_frida_script():
             break
     
     if not script_path:
-        log_error("找不到 frida_common.js 文件，已尝试路径:")
+        log_error("找不到 frida_common_new.js 文件，已尝试路径:")
         for path in possible_paths:
             log_debug("   - {}".format(path))
         return None
@@ -37,8 +37,9 @@ def create_frida_script():
     js_content += _load_native_hooks()
     js_content += _load_location_hooks()
     js_content += _load_advanced_tracer()
-    js_content += _load_job_manager()
-    js_content += _load_job_commands()
+    # 旧的任务管理系统已禁用 - 改用新的多脚本任务管理
+    # js_content += _load_job_manager()
+    # js_content += _load_job_commands()
     
     # Add interactive shell initialization and Java.perform wrapper
     js_content = _wrap_with_java_perform(js_content)
@@ -78,11 +79,11 @@ def _load_native_hooks():
 def _load_location_hooks():
     """Load Location Hook tools"""
     location_paths = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frida_location_hooks.js'),
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_location_hooks.js'),
-        os.path.join(os.path.expanduser('~'), 'fridaproject', 'frida_location_hooks.js'),
-        'frida_location_hooks.js',
-        './frida_location_hooks.js'
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frida_location_hooks_new.js'),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_location_hooks_new.js'),
+        os.path.join(os.path.expanduser('~'), 'fridaproject', 'frida_location_hooks_new.js'),
+        'frida_location_hooks_new.js',
+        './frida_location_hooks_new.js'
     ]
     
     location_script_path = None
@@ -191,34 +192,40 @@ function help() {
     LOG("    findStrInMap(key, showStack) - 监控HashMap查找key对应value", { c: Color.White });
     LOG("      示例: findStrInMap('password', 1)  // 1=显示调用栈, 0=不显示", { c: Color.Yellow });
     
-    if (typeof hookBase64 !== 'undefined') {
-        LOG("\\n📍 定位Hook函数:", { c: Color.Green });
-        LOG("  🔐 编码解码:", { c: Color.Blue });
-        LOG("    hookBase64(showStack) - Hook Base64编码解码", { c: Color.White });
-        
-        LOG("  📱 界面组件:", { c: Color.Blue });
-        LOG("    hookToast(showStack) - Hook Toast显示", { c: Color.White });
-        LOG("    hookEditText(showStack) - Hook EditText输入", { c: Color.White });
-        
-        LOG("  📊 数据结构:", { c: Color.Blue });
-        LOG("    hookJSONObject(showStack) - Hook JSONObject操作", { c: Color.White });
-        LOG("    hookHashMap(key, showStack) - Hook HashMap操作", { c: Color.White });
-        LOG("    hookArrayList(showStack) - Hook ArrayList操作", { c: Color.White });
-        
-        LOG("  📚 系统功能:", { c: Color.Blue });
-        LOG("    hookLoadLibrary(showStack) - Hook 动态库加载", { c: Color.White });
-        LOG("    hookNewStringUTF(showStack) - Hook JNI字符串创建", { c: Color.White });
-        LOG("    hookFileOperations(showStack) - Hook 文件操作", { c: Color.White });
-        LOG("    hookLog(showStack) - Hook Log输出", { c: Color.White });
-        LOG("    hookURL(showStack) - Hook URL请求", { c: Color.White });
-        
-        LOG("  🚀 批量操作:", { c: Color.Blue });
-        LOG("    enableAllHooks(showStack) - 一键启用所有定位Hook", { c: Color.White });
-        LOG("      示例: enableAllHooks(1)  // 启用所有Hook并显示调用栈", { c: Color.Yellow });
-    } else {
-        LOG("\\n📍 定位Hook工具: 未加载", { c: Color.Yellow });
-        LOG("  需要 frida_location_hooks.js 文件", { c: Color.Gray });
-    }
+    LOG("\\n📍 新的Hook任务命令:", { c: Color.Green });
+    LOG("  使用新的任务管理系统创建独立的Hook任务:", { c: Color.Yellow });
+    LOG("  🔐 编码解码:", { c: Color.Blue });
+    LOG("    hookbase64 [show_stack] - 创建Base64 Hook任务", { c: Color.White });
+    
+    LOG("  📱 界面组件:", { c: Color.Blue });
+    LOG("    hooktoast [show_stack] - 创建Toast Hook任务", { c: Color.White });
+    LOG("    hookedittext [show_stack] - 创建EditText Hook任务", { c: Color.White });
+    
+    LOG("  📊 数据结构:", { c: Color.Blue });
+    LOG("    hookjsonobject [show_stack] - 创建JSONObject Hook任务", { c: Color.White });
+    LOG("    hookhashmap [key] [show_stack] - 创建HashMap Hook任务", { c: Color.White });
+    LOG("    hookarraylist [show_stack] - 创建ArrayList Hook任务", { c: Color.White });
+    
+    LOG("  📚 系统功能:", { c: Color.Blue });
+    LOG("    hookloadlibrary [show_stack] - 创建LoadLibrary Hook任务", { c: Color.White });
+    LOG("    hooknewstringutf [show_stack] - 创建JNI字符串Hook任务", { c: Color.White });
+    LOG("    hookfileoperations [show_stack] - 创建文件操作Hook任务", { c: Color.White });
+    LOG("    hooklog [show_stack] - 创建日志Hook任务", { c: Color.White });
+    
+    LOG("  🌐 网络通信:", { c: Color.Blue });
+    LOG("    hookurl [show_stack] - 创建URL Hook任务", { c: Color.White });
+    
+    LOG("  ⚙️ Java Hook:", { c: Color.Blue });
+    LOG("    hookmethod <class.method> [show_stack] - Hook特定方法", { c: Color.White });
+    LOG("    hookclass <classname> [show_stack] - Hook类的所有方法", { c: Color.White });
+    
+    LOG("  🖥️ Native Hook:", { c: Color.Blue });
+    LOG("    hooknative <function> [show_stack] - Hook Native函数", { c: Color.White });
+    
+    LOG("  📋 任务管理:", { c: Color.Blue });
+    LOG("    tasks [status] - 查看所有任务", { c: Color.White });
+    LOG("    killall [type] - 终止所有任务", { c: Color.White });
+    LOG("    taskinfo <id> - 查看任务详情", { c: Color.White });
     
     if (typeof nativeHookNativeFunction !== 'undefined') {
         LOG("\\n🔧 Native Hook 函数:", { c: Color.Green });
@@ -334,8 +341,6 @@ rpc.exports = {
     describeJavaClass: describeJavaClass,
     printStack: printStack,
     findTragetClassLoader: findTragetClassLoader,
-    findTargetClassLoaderForClass: findTargetClassLoaderForClass,
-    printJavaCallStack: printJavaCallStack,
     findStrInMap: findStrInMap,
     
     // 高级追踪功能（基于 r0tracer）
@@ -355,94 +360,20 @@ rpc.exports = {
         LOG("hookAllApplicationClasses 需要高级追踪工具", { c: Color.Yellow }); 
     },
     
-    // 任务管理系统
-    jobs: typeof jobs !== 'undefined' ? jobs : function() { 
-        LOG("jobs 需要任务管理系统", { c: Color.Yellow }); 
-    },
-    job: typeof job !== 'undefined' ? job : function() { 
-        LOG("job 需要任务管理系统", { c: Color.Yellow }); 
-    },
-    kill: typeof kill !== 'undefined' ? kill : function() { 
-        LOG("kill 需要任务管理系统", { c: Color.Yellow }); 
-    },
-    killall: typeof killall !== 'undefined' ? killall : function() { 
-        LOG("killall 需要任务管理系统", { c: Color.Yellow }); 
-    },
-    pause: typeof pause !== 'undefined' ? pause : function() { 
-        LOG("pause 需要任务管理系统", { c: Color.Yellow }); 
-    },
-    resume: typeof resume !== 'undefined' ? resume : function() { 
-        LOG("resume 需要任务管理系统", { c: Color.Yellow }); 
-    },
-    jobstats: typeof jobstats !== 'undefined' ? jobstats : function() { 
-        LOG("jobstats 需要任务管理系统", { c: Color.Yellow }); 
-    },
-    history: typeof history !== 'undefined' ? history : function() { 
-        LOG("history 需要任务管理系统", { c: Color.Yellow }); 
-    },
-    cleanup: typeof cleanup !== 'undefined' ? cleanup : function() { 
-        LOG("cleanup 需要任务管理系统", { c: Color.Yellow }); 
-    },
-    jobhelp: typeof jobhelp !== 'undefined' ? jobhelp : function() { 
-        LOG("jobhelp 需要任务管理系统", { c: Color.Yellow }); 
-    },
+    // 旧任务管理系统已禁用，现在使用新的Python端任务管理
+    // jobs, kill, killall等命令现在通过session.py中的_handle_task_commands处理
     
-    // 带任务管理的Hook函数
-    traceMethodWithJob: typeof traceMethodWithJob !== 'undefined' ? traceMethodWithJob : function() { 
-        LOG("traceMethodWithJob 需要任务管理系统", { c: Color.Yellow }); 
-    },
-    traceClassWithJob: typeof traceClassWithJob !== 'undefined' ? traceClassWithJob : function() { 
-        LOG("traceClassWithJob 需要任务管理系统", { c: Color.Yellow }); 
-    },
-    advancedMethodTracingWithJob: typeof advancedMethodTracingWithJob !== 'undefined' ? advancedMethodTracingWithJob : function() { 
-        LOG("advancedMethodTracingWithJob 需要任务管理系统", { c: Color.Yellow }); 
-    },
-    batchHookWithJob: typeof batchHookWithJob !== 'undefined' ? batchHookWithJob : function() { 
-        LOG("batchHookWithJob 需要任务管理系统", { c: Color.Yellow }); 
-    },
+    // 旧的带任务管理的Hook函数已禁用，使用新的hookmethod/hookclass命令
     
-    // 定位Hook函数
-    hookBase64: typeof hookBase64 !== 'undefined' ? hookBase64 : function() { 
-        LOG("hookBase64 需要定位Hook工具", { c: Color.Yellow }); 
-    },
-    hookToast: typeof hookToast !== 'undefined' ? hookToast : function() { 
-        LOG("hookToast 需要定位Hook工具", { c: Color.Yellow }); 
-    },
-    hookJSONObject: typeof hookJSONObject !== 'undefined' ? hookJSONObject : function() { 
-        LOG("hookJSONObject 需要定位Hook工具", { c: Color.Yellow }); 
-    },
-    hookHashMap: typeof hookHashMap !== 'undefined' ? hookHashMap : function() { 
-        LOG("hookHashMap 需要定位Hook工具", { c: Color.Yellow }); 
-    },
-    hookEditText: typeof hookEditText !== 'undefined' ? hookEditText : function() { 
-        LOG("hookEditText 需要定位Hook工具", { c: Color.Yellow }); 
-    },
-    hookArrayList: typeof hookArrayList !== 'undefined' ? hookArrayList : function() { 
-        LOG("hookArrayList 需要定位Hook工具", { c: Color.Yellow }); 
-    },
-    hookLoadLibrary: typeof hookLoadLibrary !== 'undefined' ? hookLoadLibrary : function() { 
-        LOG("hookLoadLibrary 需要定位Hook工具", { c: Color.Yellow }); 
-    },
-    hookNewStringUTF: typeof hookNewStringUTF !== 'undefined' ? hookNewStringUTF : function() { 
-        LOG("hookNewStringUTF 需要定位Hook工具", { c: Color.Yellow }); 
-    },
-    hookFileOperations: typeof hookFileOperations !== 'undefined' ? hookFileOperations : function() { 
-        LOG("hookFileOperations 需要定位Hook工具", { c: Color.Yellow }); 
-    },
-    hookLog: typeof hookLog !== 'undefined' ? hookLog : function() { 
-        LOG("hookLog 需要定位Hook工具", { c: Color.Yellow }); 
-    },
-    hookURL: typeof hookURL !== 'undefined' ? hookURL : function() { 
-        LOG("hookURL 需要定位Hook工具", { c: Color.Yellow }); 
-    },
-    enableAllHooks: typeof enableAllHooks !== 'undefined' ? enableAllHooks : function() { 
-        LOG("enableAllHooks 需要定位Hook工具", { c: Color.Yellow }); 
-    },
+    // 旧的定位Hook函数已移除，现在使用新的hookbase64/hooktoast等命令
+    // 这些命令通过session.py中的新任务管理系统处理
     
     // 智能工具
     smartTrace: smartTrace,
     intelligentHookDispatcher: intelligentHookDispatcher,
-    loadNativeSupport: loadNativeSupport,
+    loadNativeSupport: typeof loadNativeSupport !== 'undefined' ? loadNativeSupport : function() { 
+        LOG("loadNativeSupport 功能未实现", { c: Color.Yellow }); 
+    },
     
     // Native Hook 函数 (如果可用)
     nativeHookNativeFunction: typeof nativeHookNativeFunction !== 'undefined' ? nativeHookNativeFunction : function() { 
@@ -504,7 +435,7 @@ rpc.exports = {
 if (typeof HookJobManager !== 'undefined') {
     LOG("\\n🤖 启用自动任务追踪...", { c: Color.Blue });
     
-    // 包装剩余的定位Hook函数（hookBase64、hookToast、hookHashMap、hookJSONObject、hookEditText、hookLoadLibrary、hookLog和hookURL已手动集成，不需要重复包装）
+    // 旧的定位Hook函数已移除，现使用新的任务管理系统
     var remainingHookFunctions = [
         'hookArrayList', 'hookNewStringUTF', 'hookFileOperations', 
         'enableAllHooks'

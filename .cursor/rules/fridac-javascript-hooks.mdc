@@ -1,0 +1,13 @@
+---
+description: Frida JavaScript开发规范和最佳实践（new 系列脚本）
+globs: *.js
+---
+# Frida JavaScript Hook 规则（new 系列）
+
+- 构造器/重载：获取重载句柄并使用 `.call(this, ...)` 调原始实现，避免 `expected a pointer`
+- 栈信息：优先使用 `printStackTrace()`；如不存在，在 [script_templates.py](mdc:fridac_core/script_templates.py) 注入兜底实现
+- 输出统一：使用 `LOG(text, {c: Color.*})`；LOG 内部通过 `send()` 传给 Python 渲染
+- 全局导出：需要被 RPC 调用/帮助显示的函数必须 `global.func = func`
+- 兼容性：定位 Hook、Java Hook 都放在 `*_new.js`；旧系统（HookJobManager）仅保留参考
+- 限流日志：高频 Hook（如 `ArrayList.add`）应增加输出限流，避免刷屏
+
