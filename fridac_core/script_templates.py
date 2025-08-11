@@ -295,44 +295,84 @@ Java.perform(function() {{
             }}
         }}
         
-        // Hook方法 (保持原有逻辑)
+        // Hook方法（重载兼容）
         var fullMethodName = "{class_name}.{method_name}";
         LOG("🎯 正在Hook方法: " + fullMethodName, {{ c: Color.Cyan }});
-        
-        targetClass.{method_name}.implementation = function() {{
-            LOG("\\n*** 进入 " + fullMethodName, {{ c: Color.Green }});
-            
-            // 显示调用栈
-            {f"printStack();" if show_stack else ""}
-            
-            // 打印参数
-            if (arguments.length > 0) {{
-                LOG("📥 参数:", {{ c: Color.Blue }});
-                for (var i = 0; i < arguments.length; i++) {{
-                    LOG("  arg[" + i + "]: " + arguments[i], {{ c: Color.White }});
-                }}
+
+        var __methodWrapper = targetClass.{method_name};
+        if (!__methodWrapper) {{
+            LOG("❌ 未找到方法: " + fullMethodName, {{ c: Color.Red }});
+            notifyTaskError(new Error("Method not found: " + fullMethodName));
+            return;
+        }}
+
+        var __overloads = __methodWrapper.overloads || [];
+        if (__overloads.length > 0) {{
+            LOG("🔀 发现 " + __overloads.length + " 个重载，逐个设置Hook...", {{ c: Color.Blue }});
+            for (var i = 0; i < __overloads.length; i++) {{
+                try {{
+                    (function(__over) {{
+                        __over.implementation = function() {{
+                            LOG("\\n*** 进入 " + fullMethodName, {{ c: Color.Green }});
+
+                            // 显示调用栈
+                            {f"printStack();" if show_stack else ""}
+
+                            // 打印参数
+                            if (arguments.length > 0) {{
+                                LOG("📥 参数:", {{ c: Color.Blue }});
+                                for (var j = 0; j < arguments.length; j++) {{
+                                    LOG("  arg[" + j + "]: " + arguments[j], {{ c: Color.White }});
+                                }}
+                            }}
+
+                            var retval;
+                            { ("retval = " + str(custom_return) + ";") if custom_return is not None else "retval = __over.apply(this, arguments);" }
+
+                            LOG("📤 返回值: " + retval, {{ c: Color.Blue }});
+                            LOG("🏁 退出 " + fullMethodName + "{newline_char}", {{ c: Color.Green }});
+
+                            notifyTaskHit({{
+                                method: fullMethodName,
+                                args_count: arguments.length,
+                                return_value: (retval !== undefined && retval !== null) ? retval.toString() : "null"
+                            }});
+
+                            return retval;
+                        }};
+                    }})(__overloads[i]);
+                }} catch(_e) {{ }}
             }}
-            
-            // 调用原方法
-            var retval = this.{method_name}.apply(this, arguments);
-            
-            // 自定义返回值
-            {f"retval = {custom_return};" if custom_return is not None else ""}
-            
-            // 打印返回值
-            LOG("📤 返回值: " + retval, {{ c: Color.Blue }});
-            LOG("🏁 退出 " + fullMethodName + "{newline_char}", {{ c: Color.Green }});
-            
-            // 通知任务命中
-            notifyTaskHit({{
-                method: fullMethodName,
-                args_count: arguments.length,
-                return_value: retval ? retval.toString() : "null"
-            }});
-            
-            return retval;
-        }};
-        
+        }} else {{
+            // 无重载信息兜底
+            __methodWrapper.implementation = function() {{
+                LOG("\\n*** 进入 " + fullMethodName, {{ c: Color.Green }});
+
+                {f"printStack();" if show_stack else ""}
+
+                if (arguments.length > 0) {{
+                    LOG("📥 参数:", {{ c: Color.Blue }});
+                    for (var k = 0; k < arguments.length; k++) {{
+                        LOG("  arg[" + k + "]: " + arguments[k], {{ c: Color.White }});
+                    }}
+                }}
+
+                var retval = this.{method_name}.apply(this, arguments);
+                {f"retval = {custom_return};" if custom_return is not None else ""}
+
+                LOG("📤 返回值: " + retval, {{ c: Color.Blue }});
+                LOG("🏁 退出 " + fullMethodName + "{newline_char}", {{ c: Color.Green }});
+
+                notifyTaskHit({{
+                    method: fullMethodName,
+                    args_count: arguments.length,
+                    return_value: (retval !== undefined && retval !== null) ? retval.toString() : "null"
+                }});
+
+                return retval;
+            }};
+        }}
+
         LOG("✅ 方法Hook设置成功: " + fullMethodName, {{ c: Color.Green }});
         
     }} catch (error) {{

@@ -176,26 +176,26 @@ function traceClass(className) {
 // 跟踪特定方法
 function traceMethod(fullyQualifiedMethodName) {
     LOG("🎯 跟踪方法: " + fullyQualifiedMethodName, { c: Color.Cyan });
-    
+
     // 解析类名和方法名
     var lastDotIndex = fullyQualifiedMethodName.lastIndexOf('.');
     if (lastDotIndex === -1) {
         LOG("❌ 方法名格式错误，应为: com.example.Class.method", { c: Color.Red });
         return;
     }
-    
+
     var className = fullyQualifiedMethodName.substring(0, lastDotIndex);
     var methodName = fullyQualifiedMethodName.substring(lastDotIndex + 1);
-    
+
     Java.perform(function() {
         try {
             var targetClass = null;
-            
-            // 尝试加载类
+
+            // 尝试加载类，支持 ClassLoader 回退
             try {
                 targetClass = Java.use(className);
             } catch (error) {
-                if (error.message.includes("ClassNotFoundException")) {
+                if ((error.message || '').indexOf('ClassNotFoundException') !== -1) {
                     LOG("❌ 类未在默认ClassLoader中找到，搜索其他ClassLoader...", { c: Color.Yellow });
                     var foundLoader = findTragetClassLoader(className);
                     if (foundLoader) {
@@ -209,29 +209,62 @@ function traceMethod(fullyQualifiedMethodName) {
                     throw error;
                 }
             }
-            
-            // Hook方法
-            targetClass[methodName].implementation = function() {
-                LOG("\n*** 进入 " + fullyQualifiedMethodName, { c: Color.Green });
-                
-                // 打印参数
-                if (arguments.length > 0) {
-                    LOG("📥 参数:", { c: Color.Blue });
-                    for (var i = 0; i < arguments.length; i++) {
-                        LOG("  arg[" + i + "]: " + arguments[i], { c: Color.White });
-                    }
+
+            if (!targetClass || !targetClass[methodName]) {
+                LOG("❌ 未找到方法: " + fullyQualifiedMethodName, { c: Color.Red });
+                return;
+            }
+
+            var methodWrapper = targetClass[methodName];
+            var overloads = methodWrapper.overloads || [];
+
+            // 当存在多个重载时，逐个设置 implementation；否则直接设置
+            if (overloads.length > 0) {
+                LOG("🔀 发现 " + overloads.length + " 个重载，逐个设置Hook...", { c: Color.Blue });
+                for (var i = 0; i < overloads.length; i++) {
+                    try {
+                        (function(over){
+                            over.implementation = function() {
+                                LOG("\n*** 进入 " + fullyQualifiedMethodName, { c: Color.Green });
+
+                                if (arguments.length > 0) {
+                                    LOG("📥 参数:", { c: Color.Blue });
+                                    for (var j = 0; j < arguments.length; j++) {
+                                        LOG("  arg[" + j + "]: " + arguments[j], { c: Color.White });
+                                    }
+                                }
+
+                                // 直接调用该重载的原始实现，避免递归
+                                var retval = over.apply(this, arguments);
+
+                                LOG("📤 返回值: " + retval, { c: Color.Blue });
+                                LOG("🏁 退出 " + fullyQualifiedMethodName + "\n", { c: Color.Green });
+                                return retval;
+                            };
+                        })(overloads[i]);
+                    } catch(_) {}
                 }
-                
-                var retval = this[methodName].apply(this, arguments);
-                
-                LOG("📤 返回值: " + retval, { c: Color.Blue });
-                LOG("🏁 退出 " + fullyQualifiedMethodName + "\n", { c: Color.Green });
-                
-                return retval;
-            };
-            
+            } else {
+                // 无 overload 信息时的兜底
+                methodWrapper.implementation = function() {
+                    LOG("\n*** 进入 " + fullyQualifiedMethodName, { c: Color.Green });
+
+                    if (arguments.length > 0) {
+                        LOG("📥 参数:", { c: Color.Blue });
+                        for (var k = 0; k < arguments.length; k++) {
+                            LOG("  arg[" + k + "]: " + arguments[k], { c: Color.White });
+                        }
+                    }
+
+                    var retval2 = this[methodName].apply(this, arguments);
+                    LOG("📤 返回值: " + retval2, { c: Color.Blue });
+                    LOG("🏁 退出 " + fullyQualifiedMethodName + "\n", { c: Color.Green });
+                    return retval2;
+                };
+            }
+
             LOG("✅ 方法Hook设置成功: " + fullyQualifiedMethodName, { c: Color.Green });
-            
+
         } catch (error) {
             LOG("❌ 方法Hook设置失败: " + error.message, { c: Color.Red });
         }
@@ -390,7 +423,7 @@ function hookJavaMethodWithTracing(fullyQualifiedMethodName, enableStackTrace, c
             try {
                 javaClassHook = Java.use(targetClassName);
             } catch (classLoadError) {
-                if (classLoadError.message.includes("ClassNotFoundException")) {
+                if ((classLoadError.message || '').indexOf('ClassNotFoundException') !== -1) {
                     LOG("❌ 类未在默认ClassLoader中找到，搜索其他ClassLoader...", { c: Color.Yellow });
                     var customClassLoader = findTragetClassLoader(targetClassName);
                     if (customClassLoader) {
@@ -406,33 +439,80 @@ function hookJavaMethodWithTracing(fullyQualifiedMethodName, enableStackTrace, c
                 }
             }
 
-            javaClassHook[targetMethodName].implementation = function () {
-                LOG("\n*** 进入 " + fullyQualifiedMethodName, { c: Color.Green });
+            if (!javaClassHook || !javaClassHook[targetMethodName]) {
+                LOG("❌ 未找到方法: " + fullyQualifiedMethodName, { c: Color.Red });
+                return;
+            }
 
-                if (enableStackTrace) {
-                    printStack();
+            var wrapper = javaClassHook[targetMethodName];
+            var overloads = wrapper.overloads || [];
+
+            if (overloads.length > 0) {
+                LOG("🔀 发现 " + overloads.length + " 个重载，逐个设置Hook...", { c: Color.Blue });
+                for (var i = 0; i < overloads.length; i++) {
+                    try {
+                        (function(over){
+                            over.implementation = function () {
+                                LOG("\n*** 进入 " + fullyQualifiedMethodName, { c: Color.Green });
+
+                                if (enableStackTrace) {
+                                    printStack();
+                                }
+
+                                if (arguments.length > 0) {
+                                    LOG("📥 参数:", { c: Color.Blue });
+                                    for (var j = 0; j < arguments.length; j++) {
+                                        LOG("  arg[" + j + "]: " + arguments[j], { c: Color.White });
+                                    }
+                                }
+
+                                var result;
+                                if (customReturnValue !== undefined) {
+                                    LOG("🔄 使用自定义返回值: " + customReturnValue, { c: Color.Yellow });
+                                    result = customReturnValue;
+                                } else {
+                                    // 调用该重载的原始实现
+                                    result = over.apply(this, arguments);
+                                }
+
+                                LOG("📤 返回值: " + result, { c: Color.Blue });
+                                LOG("🏁 退出 " + fullyQualifiedMethodName + "\n", { c: Color.Green });
+
+                                return result;
+                            };
+                        })(overloads[i]);
+                    } catch(_) {}
                 }
+            } else {
+                // 兜底：无 overloads 信息时直接设置
+                wrapper.implementation = function () {
+                    LOG("\n*** 进入 " + fullyQualifiedMethodName, { c: Color.Green });
 
-                if (arguments.length > 0) {
-                    LOG("📥 参数:", { c: Color.Blue });
-                    for (var i = 0; i < arguments.length; i++) {
-                        LOG("  arg[" + i + "]: " + arguments[i], { c: Color.White });
+                    if (enableStackTrace) {
+                        printStack();
                     }
-                }
 
-                var result;
-                if (customReturnValue !== undefined) {
-                    LOG("🔄 使用自定义返回值: " + customReturnValue, { c: Color.Yellow });
-                    result = customReturnValue;
-                } else {
-                    result = this[targetMethodName].apply(this, arguments);
-                }
+                    if (arguments.length > 0) {
+                        LOG("📥 参数:", { c: Color.Blue });
+                        for (var k = 0; k < arguments.length; k++) {
+                            LOG("  arg[" + k + "]: " + arguments[k], { c: Color.White });
+                        }
+                    }
 
-                LOG("📤 返回值: " + result, { c: Color.Blue });
-                LOG("🏁 退出 " + fullyQualifiedMethodName + "\n", { c: Color.Green });
+                    var result2;
+                    if (customReturnValue !== undefined) {
+                        LOG("🔄 使用自定义返回值: " + customReturnValue, { c: Color.Yellow });
+                        result2 = customReturnValue;
+                    } else {
+                        result2 = this[targetMethodName].apply(this, arguments);
+                    }
 
-                return result;
-            };
+                    LOG("📤 返回值: " + result2, { c: Color.Blue });
+                    LOG("🏁 退出 " + fullyQualifiedMethodName + "\n", { c: Color.Green });
+
+                    return result2;
+                };
+            }
 
             LOG("✅ 方法Hook设置成功: " + fullyQualifiedMethodName, { c: Color.Green });
 
