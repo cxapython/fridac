@@ -15,6 +15,7 @@
 - 🤖 **自测与自动任务** - 提供 `selftest_all` 一键验证，命中日志以 [#任务ID] 标记
 - 🚀 **自动环境检测** - 智能检测Python和Frida版本
 - 🎨 **Rich界面** - 美观的表格显示和彩色日志输出
+- 🧩 **插件化扩展** - 支持独立插件脚本（如 OkHttp Logger 插件）按需加载
 
 ## 📋 系统要求
 
@@ -39,10 +40,11 @@ pip install frida>=14.0.0 rich>=10.0.0
 sudo cp fridac /usr/local/bin/fridac
 sudo chmod +x /usr/local/bin/fridac
 
-# 复制（或确保可访问）Hook 工具脚本
+# 复制（或确保可访问）Hook 工具脚本（含插件）
 sudo cp frida_common_new.js /usr/local/bin/frida_common_new.js
 sudo cp frida_native_common.js /usr/local/bin/frida_native_common.js
 sudo cp frida_location_hooks_new.js /usr/local/bin/frida_location_hooks_new.js
+sudo cp frida_okhttp_logger.js /usr/local/bin/frida_okhttp_logger.js
 ```
 
 ### 方式二：本地使用
@@ -89,6 +91,19 @@ selftest_all
 // 🎯 智能Hook - 自动识别Java/Native
 smartTrace('com.example.MainActivity')  // Java类
 smartTrace('malloc', {showArgs: true})  // Native函数
+
+// 🌐 OkHttp Logger 插件（抓包与重放）
+okhttpFind()
+okhttpSwitchLoader('okhttp3.OkHttpClient')
+okhttpHold()
+okhttpHistory()
+okhttpResend(3)
+okhttpClear()
+
+// ✅ 一键启动（可选过滤/可选ClassLoader样本）
+okhttpStart()
+okhttpStart('api/')
+okhttpStart({ filter: 'api/', loaderSample: 'okhttp3.OkHttpClient' })
 ```
 
 ## 🔧 完整函数列表（命令行风格，括号可选）
@@ -150,6 +165,27 @@ smartTrace('malloc', {showArgs: true})  // Native函数
 | `smartTrace()` | 🎯 智能识别并Hook目标 | `smartTrace('com.example.MainActivity')` |
 | `loadNativeSupport()` | 🔧 加载Native Hook工具 | `loadNativeSupport()` |
 
+### 🌐 网络抓包与重放（OkHttp 插件）
+
+| 函数名 | 描述 | 使用示例 |
+|--------|------|----------|
+| `okhttpFind()` | 检测是否使用 OkHttp2/3 | `okhttpFind()` |
+| `okhttpSwitchLoader()` | 切换使用的 ClassLoader | `okhttpSwitchLoader('okhttp3.OkHttpClient')` |
+| `okhttpHold()` | 启用 OkHttp 拦截（hold） | `okhttpHold()` |
+| `okhttpHistory()` | 列出可重放的请求 | `okhttpHistory()` |
+| `okhttpResend(index)` | 重放指定请求（同步执行） | `okhttpResend(3)` |
+| `okhttpClear()` | 清空历史记录 | `okhttpClear()` |
+| `okhttpStart([filter|string|options])` | 一键启用（可选过滤/可选ClassLoader样本） | `okhttpStart({filter:'api/', loaderSample:'okhttp3.OkHttpClient'})` |
+
+#### 附注：attach 模式
+- 结论: 直接以 attach 模式可用，无需 spawn。
+- 提醒: attach 可能错过进程早期请求；需抓最早请求时用 spawn 更稳。
+- 建议流程（attach）:
+  1) `fridac -p com.example.app` 进入交互
+  2) 在首页或有网络行为的页面执行 `okhttpStart([可选过滤])`
+  3) 产生网络流量后 `okhttpHistory()` / `okhttpResend(n)`
+  4) 如提示未检测到 RealCall：等待/手动触发请求，或 `okhttpStart({ loaderSample: 'okhttp3.OkHttpClient' })`
+
 ## 📁 项目结构
 
 ```
@@ -159,6 +195,7 @@ fridac/
 ├── frida_native_common.js    # Native Hook 工具集（单文件版，或加载 frida_native/ 模块）
 ├── frida_native/             # Native Hook 模块化脚本目录
 ├── frida_location_hooks_new.js # 定位 Hook 工具集（新）
+├── frida_okhttp_logger.js    # OkHttp Logger 插件（抓包与重放，历史/重放）
 ├── frida_advanced_tracer.js  # 高级追踪工具（基于 r0tracer）
 ├── fridac_core/              # Python 核心模块（session/task/script 等）
 ├── requirements.txt          # Python 依赖
@@ -470,6 +507,13 @@ nativeHookNetworkFunctions(1)
 connect: 192.168.1.100:8080 (socket: 15)
 send: socket=15, len=256
 recv: socket=15, received=512
+
+// 统一抓包（Java层多库兼容，自动生成 Python requests）
+fetch('keyword')
+
+// OkHttp 插件方式（类 OkHttpLogger-Frida 风格，支持历史/重放）
+okhttpFind(); okhttpHold();
+okhttpHistory(); okhttpResend(1);
 ```
 
 ### 🛡️ 反调试检测

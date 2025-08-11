@@ -1,0 +1,49 @@
+---
+alwaysApply: false
+description: fridac OkHttp Logger 插件开发与使用指南
+---
+# OkHttp Logger 插件（插件化抓包与重放）
+
+本规则说明 fridac 项目中 OkHttp Logger 插件的结构、加载链路、全局导出、与帮助/CLI 集成方式。
+
+## 关键文件
+- 插件脚本: [frida_okhttp_logger.js](mdc:frida_okhttp_logger.js)
+- 主 JS 工具集: [frida_common_new.js](mdc:frida_common_new.js)
+- 脚本管理器: [fridac_core/script_manager.py](mdc:fridac_core/script_manager.py)
+- README 说明: [README.md](mdc:README.md)
+
+## 加载链路
+- `script_manager.create_frida_script()` 拼装脚本时，按顺序拼接：
+  1) Java 工具（`frida_common_new.js`）
+  2) Native 工具/定位工具
+  3) OkHttp Logger 插件（`_load_okhttp_logger_plugin()`）
+  4) 高级追踪工具
+- 插件加载失败将打印调试提示，但不会影响主功能。
+
+## 全局导出与 RPC
+- 插件加载后，在全局导出以下函数：
+  - `okhttpFind`, `okhttpSwitchLoader`, `okhttpHold`, `okhttpHistory`, `okhttpResend`, `okhttpClear`
+- 主文件对这些导出做了“条件导出”，即插件存在时才挂载到 `global.*`（见 `frida_common_new.js` 尾部）。
+- CLI 的 RPC 导出在 [script_manager.py](mdc:fridac_core/script_manager.py) 中添加了对应兜底导出（插件缺失会提示需要插件）。
+
+## 使用方式（Shell）
+```javascript
+okhttpFind()
+okhttpSwitchLoader('okhttp3.OkHttpClient')
+okhttpHold()
+okhttpHistory()
+okhttpResend(1)
+okhttpClear()
+```
+
+## 插件能力
+- 拦截 OkHttp2/OkHttp3 请求（`RealCall.execute/enqueue`）
+- 打印请求/响应（类 OkHttpLogger-Frida 风格）
+- 保存历史并重放（`call.clone()` 或新建 `OkHttpClient`）
+- 发送结构化事件（`fetch_request`/`fetch_response`）并生成 Python `requests` 代码
+
+## 注意事项
+- 插件依赖 `frida_common_new.js` 中的基础函数（`LOG`/`Color`/`printStack` 等）。
+- 若目标 App 存在多 `ClassLoader`，优先使用 `okhttpSwitchLoader('okhttp3.OkHttpClient')` 切换。
+- 抓包统一方案可使用 `fetch()`；插件更偏向 OkHttp 专注的历史/重放体验。
+

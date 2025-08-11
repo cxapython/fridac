@@ -36,6 +36,7 @@ def create_frida_script():
     # 加载附加的脚本模块
     js_content += _load_native_hooks()
     js_content += _load_location_hooks()
+    js_content += _load_okhttp_logger_plugin()
     js_content += _load_advanced_tracer()
     
     # 添加交互式 Shell 初始化与 Java.perform 包装
@@ -127,6 +128,28 @@ def _load_location_hooks():
     else:
         log_debug("未找到 frida_location_hooks.js，定位工具不可用")
     
+    return ""
+
+def _load_okhttp_logger_plugin():
+    """加载 OkHttp Logger 插件 (独立JS)"""
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidates = [
+        os.path.join(base_dir, 'frida_okhttp_logger.js'),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frida_okhttp_logger.js'),
+        os.path.join(os.path.expanduser('~'), 'fridaproject', 'frida_okhttp_logger.js'),
+        'frida_okhttp_logger.js',
+        './frida_okhttp_logger.js'
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            try:
+                with open(p, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                log_debug("OkHttp Logger 插件已加载: {}".format(p))
+                return '\n\n// ===== OkHttp Logger Plugin =====\n' + content
+            except Exception as e:
+                log_warning("加载 OkHttp Logger 插件失败: {}".format(e))
+    log_debug("未找到 OkHttp Logger 插件，相关命令将不可用")
     return ""
 
 def _load_advanced_tracer():
@@ -269,6 +292,15 @@ function help() {
     
     LOG("  🌐 网络通信:", { c: Color.Blue });
     LOG("    hookurl [show_stack] - 创建URL Hook任务", { c: Color.White });
+    LOG("    fetch([filter]) - 抓取常见网络请求并生成Python代码", { c: Color.White });
+    LOG("    OkHttp Logger:", { c: Color.Blue });
+    LOG("      okhttpFind() - 检测OkHttp(2/3)", { c: Color.White });
+    LOG("      okhttpSwitchLoader('<okhttp3.OkHttpClient>') - 切换ClassLoader", { c: Color.White });
+    LOG("      okhttpHold() - 启用OkHttp拦截(hold)", { c: Color.White });
+    LOG("      okhttpHistory() - 查看可重放请求列表", { c: Color.White });
+    LOG("      okhttpResend(index) - 重放指定请求", { c: Color.White });
+    LOG("      okhttpClear() - 清空历史", { c: Color.White });
+    LOG("      okhttpStart([filter|string|options]) - 一键启动（可选过滤、可选ClassLoader样本）", { c: Color.White });
     
     LOG("  ⚙️ Java Hook:", { c: Color.Blue });
     LOG("    hookmethod <class.method> [show_stack] - Hook特定方法", { c: Color.White });
@@ -412,6 +444,14 @@ rpc.exports = {
     printStack: printStack,
     findTragetClassLoader: findTragetClassLoader,
     findStrInMap: findStrInMap,
+    // OkHttp Logger (条件导出)
+    okhttpfind: (typeof okhttpFind !== 'undefined') ? okhttpFind : function(){ LOG("okhttpFind 需要 frida_common_new.js 中的OkHttp功能", { c: Color.Yellow }); },
+    okhttpswitchloader: (typeof okhttpSwitchLoader !== 'undefined') ? okhttpSwitchLoader : function(){ LOG("okhttpSwitchLoader 需要 frida_common_new.js 中的OkHttp功能", { c: Color.Yellow }); },
+    okhttphold: (typeof okhttpHold !== 'undefined') ? okhttpHold : function(){ LOG("okhttpHold 需要 frida_common_new.js 中的OkHttp功能", { c: Color.Yellow }); },
+    okhttphistory: (typeof okhttpHistory !== 'undefined') ? okhttpHistory : function(){ LOG("okhttpHistory 需要 frida_common_new.js 中的OkHttp功能", { c: Color.Yellow }); },
+    okhttpresend: (typeof okhttpResend !== 'undefined') ? okhttpResend : function(){ LOG("okhttpResend 需要 frida_common_new.js 中的OkHttp功能", { c: Color.Yellow }); },
+    okhttpclear: (typeof okhttpClear !== 'undefined') ? okhttpClear : function(){ LOG("okhttpClear 需要 frida_common_new.js 中的OkHttp功能", { c: Color.Yellow }); },
+    okhttpstart: (typeof okhttpStart !== 'undefined') ? okhttpStart : function(){ LOG("okhttpStart 需要 OkHttp 插件", { c: Color.Yellow }); },
     
     // 高级追踪功能（基于 r0tracer）
     bypassTracerPidDetection: typeof bypassTracerPidDetection !== 'undefined' ? bypassTracerPidDetection : function() { 
@@ -494,9 +534,9 @@ rpc.exports = {
         LOG("nativeQuickAnalyzeApp 需要 Native Hook 工具", { c: Color.Yellow }); 
     },
     
-    // 工具函数
-    uniqBy: uniqBy,
-    bytesToString: bytesToString,
+    // 工具函数（条件导出，避免未加载时报错）
+    uniqBy: (typeof uniqBy !== 'undefined') ? uniqBy : function() { try { LOG('uniqBy 未加载（可能需要 Native 工具）', { c: Color.Yellow }); } catch(_) {} return null; },
+    bytesToString: (typeof bytesToString !== 'undefined') ? bytesToString : function(arr) { try { if (typeof __bytesToString !== 'undefined') return __bytesToString(arr, null); } catch(_) {} try { return String(arr); } catch(__) { return ''; } },
     LOG: LOG,
     Color: Color
 };

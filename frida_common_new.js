@@ -59,6 +59,30 @@ function printJavaCallStack(showComplete, maxLines) {
     try { printStack(showComplete, maxLines); } catch (_) { }
 }
 
+// 参数类型获取
+function __getArgType(value) {
+    try {
+        if (value === null) return 'null';
+        if (typeof value === 'undefined') return 'undefined';
+        if (typeof value.getClass === 'function') {
+            try { return String(value.getClass().getName()); } catch(_) {}
+        }
+        if (value && value.$className) {
+            try { return String(value.$className); } catch(_) {}
+        }
+        if (value && value.class && typeof value.class.getName === 'function') {
+            try { return String(value.class.getName()); } catch(_) {}
+        }
+        var t = typeof value;
+        if (t === 'object') {
+            try { return Object.prototype.toString.call(value); } catch(_) {}
+        }
+        return t;
+    } catch (_) {
+        return 'unknown';
+    }
+}
+
 // ClassLoader 搜索功能
 function findTragetClassLoader(className) {
     var foundLoader = null;
@@ -227,12 +251,13 @@ function traceMethod(fullyQualifiedMethodName) {
                             over.implementation = function() {
                                 LOG("\n*** 进入 " + fullyQualifiedMethodName, { c: Color.Green });
 
-                                if (arguments.length > 0) {
-                                    LOG("📥 参数:", { c: Color.Blue });
-                                    for (var j = 0; j < arguments.length; j++) {
-                                        LOG("  arg[" + j + "]: " + arguments[j], { c: Color.White });
-                                    }
+                            if (arguments.length > 0) {
+                                LOG("📥 参数:", { c: Color.Blue });
+                                for (var j = 0; j < arguments.length; j++) {
+                                    var __t = __getArgType(arguments[j]);
+                                    LOG("  arg[" + j + "] (" + __t + "): " + arguments[j], { c: Color.White });
                                 }
+                            }
 
                                 // 直接调用该重载的原始实现，避免递归
                                 var retval = over.apply(this, arguments);
@@ -252,7 +277,8 @@ function traceMethod(fullyQualifiedMethodName) {
                     if (arguments.length > 0) {
                         LOG("📥 参数:", { c: Color.Blue });
                         for (var k = 0; k < arguments.length; k++) {
-                            LOG("  arg[" + k + "]: " + arguments[k], { c: Color.White });
+                            var __t2 = __getArgType(arguments[k]);
+                            LOG("  arg[" + k + "] (" + __t2 + "): " + arguments[k], { c: Color.White });
                         }
                     }
 
@@ -459,12 +485,13 @@ function hookJavaMethodWithTracing(fullyQualifiedMethodName, enableStackTrace, c
                                     printStack();
                                 }
 
-                                if (arguments.length > 0) {
-                                    LOG("📥 参数:", { c: Color.Blue });
-                                    for (var j = 0; j < arguments.length; j++) {
-                                        LOG("  arg[" + j + "]: " + arguments[j], { c: Color.White });
-                                    }
+                            if (arguments.length > 0) {
+                                LOG("📥 参数:", { c: Color.Blue });
+                                for (var j = 0; j < arguments.length; j++) {
+                                    var __t = __getArgType(arguments[j]);
+                                    LOG("  arg[" + j + "] (" + __t + "): " + arguments[j], { c: Color.White });
                                 }
+                            }
 
                                 var result;
                                 if (customReturnValue !== undefined) {
@@ -1183,6 +1210,286 @@ function fetch(filterStr) {
     }
 }
 
+// ===== OkHttp Logger 功能（媲美 OkHttpLogger-Frida） =====
+var __okhttp_state = { installed: false, loader: null, history: [], counter: 0 };
+
+function __okhttp_use(className) {
+    try {
+        if (__okhttp_state.loader) {
+            return Java.ClassFactory.get(__okhttp_state.loader).use(className);
+        }
+        return Java.use(className);
+    } catch (e) {
+        if ((e.message || '').indexOf('ClassNotFoundException') !== -1) {
+            try {
+                var l = findTragetClassLoader(className);
+                if (l) { __okhttp_state.loader = l; return Java.ClassFactory.get(l).use(className); }
+            } catch (_) {}
+        }
+        return null;
+    }
+}
+
+function __okhttp_headers_to_obj(headers) {
+    var obj = {};
+    try {
+        var names = headers.names();
+        var it = names.iterator();
+        while (it.hasNext()) { var n = String(it.next()); obj[n] = String(headers.get(n)); }
+    } catch (_) {}
+    return obj;
+}
+
+function __okhttp_log_request(callObj, req) {
+    try {
+        var method = 'GET'; try { method = String(req.method()); } catch(_){}
+        var url = ''; try { url = String(req.url().toString()); } catch(_){ }
+        var headersObj = {}; try { headersObj = __okhttp_headers_to_obj(req.headers()); } catch(_){}
+        var cookieStr = headersObj['Cookie'] || headersObj['cookie'] || '';
+        var bodyStr = '';
+        var contentTypeStr = '';
+        try {
+            var body = req.body();
+            if (body) {
+                try { var mt = body.contentType(); contentTypeStr = mt ? String(mt.toString()) : ''; } catch(_){ }
+                try {
+                    var BufferClz = __okhttp_use('okio.Buffer');
+                    if (BufferClz) {
+                        var buff = BufferClz.$new();
+                        body.writeTo(buff);
+                        try {
+                            var bytes = buff.readByteArray();
+                            var cs = __parseCharsetFromHeaders(headersObj, contentTypeStr) || 'utf-8';
+                            bodyStr = __bytesToString(bytes, cs);
+                        } catch(_) {
+                            try { bodyStr = String(buff.readUtf8()); } catch(__) { bodyStr = ''; }
+                        }
+                    }
+                } catch(_){ }
+            }
+        } catch(_){ }
+
+        LOG('\n┌' + '─'.repeat(100));
+        LOG('| URL: ' + url);
+        LOG('|');
+        LOG('| Method: ' + method);
+        LOG('|');
+        LOG('| Headers:');
+        try { Object.keys(headersObj).forEach(function(k){ LOG('|   ┌─' + k + ': ' + headersObj[k]); }); } catch(_){}
+        if (bodyStr && bodyStr.length > 0) {
+            LOG('|');
+            LOG('| Body:');
+            LOG('|   ' + (bodyStr.length > 4000 ? (bodyStr.substring(0, 4000) + ' ...') : bodyStr));
+            LOG('|');
+            LOG('|--> END ' + (contentTypeStr.toLowerCase().indexOf('text') === -1 && contentTypeStr.toLowerCase().indexOf('json') === -1 ? ' (binary body omitted -> isPlaintext)' : ''));
+        } else {
+            LOG('|');
+            LOG('|--> END');
+        }
+
+        // 保存到历史
+        var idx = (++__okhttp_state.counter);
+        __okhttp_state.history.push({
+            index: idx,
+            ts: Date.now(),
+            method: method,
+            url: url,
+            headers: headersObj,
+            body: bodyStr || null,
+            contentType: contentTypeStr || null,
+            callRef: callObj || null,
+            requestRef: req || null
+        });
+
+        // 事件
+        try {
+            send({ type: 'fetch_request', ts: Date.now(), items: { library: 'okhttp', method: method, url: url, headers: headersObj, cookies: cookieStr || null, python: __genRequestsCode(method, url, headersObj, cookieStr, bodyStr, contentTypeStr), body: bodyStr || null, contentType: contentTypeStr || null, index: idx } });
+        } catch(_){}
+
+        return idx;
+    } catch (e) {
+        LOG('⚠️ OkHttp 请求日志失败: ' + e.message, { c: Color.Yellow });
+        return -1;
+    }
+}
+
+function __okhttp_log_response(resp) {
+    try {
+        var code = 0; try { code = resp.code(); } catch(_){}
+        var message = ''; try { message = String(resp.message()); } catch(_){}
+        var url = ''; try { url = String(resp.request().url().toString()); } catch(_){}
+        var headersObj = {}; try { headersObj = __okhttp_headers_to_obj(resp.headers()); } catch(_){}
+        var bodyStr = null;
+        try {
+            if (typeof resp.peekBody === 'function') {
+                var pb = resp.peekBody(1024 * 1024);
+                try { bodyStr = String(pb.string()); } catch(eStr) {
+                    try { var bytes = pb.bytes(); bodyStr = __bytesToString(bytes, __parseCharsetFromHeaders(headersObj, headersObj['Content-Type'] || '')); } catch(_) { bodyStr = null; }
+                }
+            }
+        } catch(_){}
+
+        LOG('|');
+        LOG('| Status Code: ' + code + ' / ' + (message || ''));
+        LOG('|');
+        LOG('| Headers:');
+        try { Object.keys(headersObj).forEach(function(k){ LOG('|   ┌─' + k + ': ' + headersObj[k]); }); } catch(_){}
+        LOG('| ');
+        if (bodyStr !== null) {
+            LOG('| Body:');
+            LOG('|   ' + (bodyStr.length > 4000 ? (bodyStr.substring(0, 4000) + ' ...') : bodyStr));
+            LOG('| ');
+        }
+        LOG('|<-- END HTTP');
+        LOG('└' + '─'.repeat(100));
+
+        try { send({ type: 'fetch_response', ts: Date.now(), items: { library: 'okhttp', url: url, code: code, message: message, headers: headersObj, body: bodyStr } }); } catch(_){}
+    } catch (e) {
+        LOG('⚠️ OkHttp 响应日志失败: ' + e.message, { c: Color.Yellow });
+    }
+}
+
+function okhttpFind() {
+    try {
+        var has3 = false, has2 = false;
+        Java.perform(function(){
+            try {
+                var classes = Java.enumerateLoadedClassesSync();
+                for (var i = 0; i < classes.length; i++) {
+                    var cn = classes[i];
+                    if (!has3 && cn.indexOf('okhttp3.') === 0) has3 = true;
+                    if (!has2 && cn.indexOf('com.squareup.okhttp.') === 0) has2 = true;
+                    if (has3 && has2) break;
+                }
+            } catch(_){ }
+        });
+        if (has3) {
+            LOG('✅ 检测到 OkHttp3', { c: Color.Green });
+        } else if (has2) {
+            LOG('✅ 检测到 OkHttp2', { c: Color.Green });
+        } else {
+            LOG('❌ 未检测到 OkHttp', { c: Color.Red });
+        }
+        return { ok3: has3, ok2: has2 };
+    } catch (e) {
+        LOG('❌ okhttpFind 失败: ' + e.message, { c: Color.Red });
+        return { ok3: false, ok2: false };
+    }
+}
+
+function okhttpSwitchLoader(sampleClassName) {
+    try {
+        var l = findTragetClassLoader(sampleClassName);
+        if (l) { __okhttp_state.loader = l; LOG('🎯 已切换 OkHttp ClassLoader', { c: Color.Green }); return true; }
+        LOG('⚠️ 未找到可用的 ClassLoader', { c: Color.Yellow });
+        return false;
+    } catch (e) {
+        LOG('❌ switchLoader 失败: ' + e.message, { c: Color.Red });
+        return false;
+    }
+}
+
+function __installOkHttpLoggerHooks() {
+    if (__okhttp_state.installed) { LOG('ℹ️ OkHttp hold 已启用', { c: Color.Cyan }); return true; }
+    var installed = false;
+    Java.perform(function(){
+        // OkHttp3 RealCall
+        var RC = __okhttp_use('okhttp3.RealCall') || __okhttp_use('okhttp3.internal.connection.RealCall');
+        if (RC) {
+            try {
+                var exec = RC.execute.overload();
+                exec.implementation = function() {
+                    var idx = -1;
+                    try { var req = this.request ? this.request() : (this.originalRequest ? this.originalRequest() : null); if (req) idx = __okhttp_log_request(this, req); } catch(_){ }
+                    var resp = exec.call(this);
+                    try { __okhttp_log_response(resp); } catch(_){ }
+                    // 记录响应到对应历史项
+                    try { if (idx > 0) { var h = __okhttp_state.history.find(function(x){ return x.index === idx; }); if (h) h.responseRef = resp; } } catch(_){ }
+                    return resp;
+                };
+                installed = true;
+            } catch(_){ }
+            try {
+                var enq = RC.enqueue.overload('okhttp3.Callback');
+                enq.implementation = function(cb) {
+                    try { var req = this.request ? this.request() : (this.originalRequest ? this.originalRequest() : null); if (req) { __okhttp_log_request(this, req); } } catch(_){ }
+                    return enq.call(this, cb);
+                };
+                installed = true;
+            } catch(_){ }
+        }
+        // OkHttp2
+        var RC2 = __okhttp_use('com.squareup.okhttp.RealCall');
+        if (RC2) {
+            try {
+                var exec2 = RC2.execute.overload();
+                exec2.implementation = function() {
+                    try { var req = this.request ? this.request() : null; if (req) __okhttp_log_request(this, req); } catch(_){ }
+                    var resp = exec2.call(this);
+                    try { __okhttp_log_response(resp); } catch(_){ }
+                    return resp;
+                };
+                installed = true;
+            } catch(_){ }
+            try {
+                var enq2 = RC2.enqueue.overload('com.squareup.okhttp.Callback');
+                enq2.implementation = function(cb) {
+                    try { var req = this.request ? this.request() : null; if (req) __okhttp_log_request(this, req); } catch(_){ }
+                    return enq2.call(this, cb);
+                };
+                installed = true;
+            } catch(_){ }
+        }
+    });
+    if (installed) { __okhttp_state.installed = true; LOG('✅ OkHttp hold 已启用', { c: Color.Green }); return true; }
+    LOG('⚠️ 未找到 OkHttp RealCall 类', { c: Color.Yellow });
+    return false;
+}
+
+function okhttpHold() { try { return __installOkHttpLoggerHooks(); } catch (e) { LOG('❌ hold 启动失败: ' + e.message, { c: Color.Red }); return false; } }
+
+function okhttpHistory() {
+    try {
+        var list = __okhttp_state.history || [];
+        if (!list.length) { LOG('ℹ️ 无历史记录', { c: Color.Gray }); return []; }
+        for (var i = 0; i < list.length; i++) {
+            var h = list[i];
+            LOG('#' + h.index + ' ' + h.method + ' ' + h.url, { c: Color.Cyan });
+        }
+        return list.map(function(h){ return { index: h.index, method: h.method, url: h.url }; });
+    } catch (e) { LOG('❌ history 失败: ' + e.message, { c: Color.Red }); return []; }
+}
+
+function okhttpResend(index) {
+    try {
+        var idx = parseInt(index);
+        var h = (__okhttp_state.history || []).find(function(x){ return x.index === idx; });
+        if (!h) { LOG('❌ 未找到历史项 #' + idx, { c: Color.Red }); return false; }
+        var resp = null;
+        try {
+            if (h.callRef && typeof h.callRef.clone === 'function') {
+                var cloned = h.callRef.clone();
+                resp = cloned.execute();
+            } else if (h.requestRef) {
+                var Builder = __okhttp_use('okhttp3.OkHttpClient$Builder');
+                if (Builder) {
+                    var builder = Builder.$new();
+                    var client = builder.build();
+                    var call = client.newCall(h.requestRef);
+                    resp = call.execute();
+                }
+            }
+        } catch (e2) {
+            LOG('⚠️ 重放失败: ' + e2.message, { c: Color.Yellow });
+        }
+        if (resp) { __okhttp_log_response(resp); return true; }
+        LOG('❌ 重放失败，无法构造请求', { c: Color.Red });
+        return false;
+    } catch (e) { LOG('❌ resend 失败: ' + e.message, { c: Color.Red }); return false; }
+}
+
+function okhttpClear() { try { __okhttp_state.history = []; __okhttp_state.counter = 0; LOG('🧹 已清空 OkHttp 历史', { c: Color.Green }); return true; } catch (_) { return false; } }
+
 // ===== 帮助函数 =====
 function help() {
     LOG("\n📚 fridacli Hook工具帮助 (新版本)", { c: Color.Cyan });
@@ -1199,6 +1506,12 @@ function help() {
         ["hookurl", "创建URL Hook任务"],
         ["hooktoast", "创建Toast Hook任务"],
         ["fetch([filter])", "抓取网络请求，生成等价Python requests代码并保存日志，可选按字符串过滤"],
+        ["okhttpFind()", "检测是否使用OkHttp (2/3)"],
+        ["okhttpSwitchLoader('<okhttp3.OkHttpClient>')", "切换使用的ClassLoader"],
+        ["okhttpHold()", "开启OkHttp拦截(hold)"],
+        ["okhttpHistory()", "打印可重放的请求列表"],
+        ["okhttpResend(index)", "按编号重放请求(同步执行)"],
+        ["okhttpClear()", "清空历史记录"],
         ["help()", "显示此帮助"]
     ];
     
@@ -1343,6 +1656,14 @@ global.printStack = printStack;
 global.printJavaCallStack = printJavaCallStack;
 global.findTragetClassLoader = findTragetClassLoader;
 global.fetch = fetch;
+// OkHttp Logger 导出（插件提供时可用）
+if (typeof okhttpFind !== 'undefined') global.okhttpFind = okhttpFind;
+if (typeof okhttpSwitchLoader !== 'undefined') global.okhttpSwitchLoader = okhttpSwitchLoader;
+if (typeof okhttpHold !== 'undefined') global.okhttpHold = okhttpHold;
+if (typeof okhttpHistory !== 'undefined') global.okhttpHistory = okhttpHistory;
+if (typeof okhttpResend !== 'undefined') global.okhttpResend = okhttpResend;
+if (typeof okhttpClear !== 'undefined') global.okhttpClear = okhttpClear;
+if (typeof okhttpStart !== 'undefined') global.okhttpStart = okhttpStart;
 
 // 提供 loadNativeSupport 便捷函数（如果 Native 模块已自动加载则提示已就绪）
 function loadNativeSupport() {

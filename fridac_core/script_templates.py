@@ -299,6 +299,30 @@ Java.perform(function() {{
         var fullMethodName = "{class_name}.{method_name}";
         LOG("🎯 正在Hook方法: " + fullMethodName, {{ c: Color.Cyan }});
 
+        // 参数类型辅助
+        function __getArgType(value) {{
+            try {{
+                if (value === null) return 'null';
+                if (typeof value === 'undefined') return 'undefined';
+                if (value && typeof value.getClass === 'function') {{
+                    try {{ return String(value.getClass().getName()); }} catch(_) {{}}
+                }}
+                if (value && value.$className) {{
+                    try {{ return String(value.$className); }} catch(_) {{}}
+                }}
+                if (value && value.class && typeof value.class.getName === 'function') {{
+                    try {{ return String(value.class.getName()); }} catch(_) {{}}
+                }}
+                var t = typeof value;
+                if (t === 'object') {{
+                    try {{ return Object.prototype.toString.call(value); }} catch(_) {{}}
+                }}
+                return t;
+            }} catch (_) {{
+                return 'unknown';
+            }}
+        }}
+
         var __methodWrapper = targetClass.{method_name};
         if (!__methodWrapper) {{
             LOG("❌ 未找到方法: " + fullMethodName, {{ c: Color.Red }});
@@ -318,11 +342,12 @@ Java.perform(function() {{
                             // 显示调用栈
                             {f"printStack();" if show_stack else ""}
 
-                            // 打印参数
+                            // 打印参数（含类型）
                             if (arguments.length > 0) {{
                                 LOG("📥 参数:", {{ c: Color.Blue }});
                                 for (var j = 0; j < arguments.length; j++) {{
-                                    LOG("  arg[" + j + "]: " + arguments[j], {{ c: Color.White }});
+                                    var __t = __getArgType(arguments[j]);
+                                    LOG("  arg[" + j + "] (" + __t + "): " + arguments[j], {{ c: Color.White }});
                                 }}
                             }}
 
@@ -353,7 +378,8 @@ Java.perform(function() {{
                 if (arguments.length > 0) {{
                     LOG("📥 参数:", {{ c: Color.Blue }});
                     for (var k = 0; k < arguments.length; k++) {{
-                        LOG("  arg[" + k + "]: " + arguments[k], {{ c: Color.White }});
+                        var __t2 = __getArgType(arguments[k]);
+                        LOG("  arg[" + k + "] (" + __t2 + "): " + arguments[k], {{ c: Color.White }});
                     }}
                 }}
 
@@ -1198,7 +1224,7 @@ try {{
             }
 
             Java.perform(function(){ try{ __installOkHttp3(); }catch(_){ } try{ __installHttpURLConnection(); }catch(_){ } });
-            LOG('✅ fetch 任务已启动' + (__filter ? (' (过滤: '+__filter+')') : ''), { c: Color.Green });
+            LOG('✅ fetch 任务已启动' + (__filter ? (' (过滤: 'ya_filter+')') : ''), { c: Color.Green });
         } catch (e) {
             LOG('❌ fetch 任务启动失败: ' + e.message, { c: Color.Red });
             notifyTaskError(e);
