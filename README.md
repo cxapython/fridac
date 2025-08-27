@@ -186,23 +186,140 @@ okhttpStart({ filter: 'api/', loaderSample: 'okhttp3.OkHttpClient' })
   3) 产生网络流量后 `okhttpHistory()` / `okhttpResend(n)`
   4) 如提示未检测到 RealCall：等待/手动触发请求，或 `okhttpStart({ loaderSample: 'okhttp3.OkHttpClient' })`
 
-## 📁 项目结构
+## 📁 项目架构
+
+### 🏗️ 系统架构图
+
+```mermaid
+graph TB
+    %% CLI 入口
+    CLI[🚀 fridac<br/>CLI 入口] --> Core[🏗️ fridac_core<br/>Python 核心模块]
+    
+    %% 核心模块
+    Core --> Session[📱 session.py<br/>会话管理]
+    Core --> TaskMgr[⚙️ task_manager.py<br/>任务系统]
+    Core --> ScriptMgr[📝 script_manager.py<br/>脚本管理]
+    Core --> ScriptTpl[🎯 script_templates.py<br/>脚本模板]
+    Core --> CustomMgr[🎨 custom_scripts.py<br/>自定义脚本管理]
+    Core --> Completer[💡 completer.py<br/>智能补全]
+    Core --> Env[🌍 environment.py<br/>环境检测]
+    Core --> Logger[📋 logger.py<br/>日志系统]
+    
+    %% JavaScript Hook 工具
+    ScriptMgr --> JavaHook[☕ frida_common_new.js<br/>Java Hook 工具集]
+    ScriptMgr --> LocationHook[📍 frida_location_hooks_new.js<br/>定位 Hook 工具]
+    ScriptMgr --> NativeHook[🔧 frida_native_common.js<br/>Native Hook 工具]
+    ScriptMgr --> AdvancedHook[🔥 frida_advanced_tracer.js<br/>高级追踪工具]
+    ScriptMgr --> OkHttpHook[🌐 frida_okhttp_logger.js<br/>OkHttp Logger 插件]
+    
+    %% Native Hook 模块
+    NativeHook --> NativeModules[📦 frida_native/<br/>Native Hook 模块]
+    NativeModules --> NativeCore[🔧 frida_native_core.js]
+    NativeModules --> NativeCrypto[🔐 frida_native_crypto.js]
+    NativeModules --> NativeNetwork[🌐 frida_native_network.js]
+    NativeModules --> NativeJNI[☕ frida_native_jni.js]
+    NativeModules --> NativeAntiDebug[🛡️ frida_native_anti_debug.js]
+    NativeModules --> NativeOther[... 其他模块]
+    
+    %% 自定义脚本系统
+    CustomMgr --> ScriptsDir[🎨 scripts/<br/>用户脚本目录]
+    ScriptsDir --> UserScript1[📄 network_monitor.js]
+    ScriptsDir --> UserScript2[📄 crypto_detector.js]
+    ScriptsDir --> UserScriptN[📄 ...]
+    
+    %% 任务系统流程
+    Session --> TaskMgr
+    TaskMgr --> ScriptTpl
+    ScriptTpl --> FridaScript[🎯 Frida Script<br/>独立任务实例]
+    
+    %% 依赖和配置
+    Core --> Requirements[📋 requirements.txt<br/>Python 依赖]
+    Requirements --> Frida[🔌 frida>=14.0.0]
+    Requirements --> Rich[🎨 rich>=10.0.0<br/>可选]
+    
+    %% 文档系统
+    CLI --> Docs[📚 文档系统]
+    Docs --> ReadMe[📖 README.md<br/>项目主文档]
+    Docs --> CustomGuide[📘 CUSTOM_SCRIPTS_GUIDE.md<br/>自定义脚本指南]
+    Docs --> CustomDemo[🎬 CUSTOM_SCRIPTS_DEMO.md<br/>功能演示]
+    Docs --> CleanupSummary[🧹 PROJECT_CLEANUP_SUMMARY.md<br/>清理总结]
+    
+    %% 测试系统
+    CustomMgr --> TestScript[🧪 test_custom_scripts.py<br/>功能测试]
+    
+    %% 智能补全集成
+    Session --> Completer
+    CustomMgr --> Completer
+    
+    %% 数据流
+    Session -.->|"命令调用"| JavaHook
+    Session -.->|"命令调用"| LocationHook
+    Session -.->|"命令调用"| NativeHook
+    Session -.->|"命令调用"| ScriptsDir
+    
+    %% 样式
+    classDef coreModule fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef jsHook fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef customScript fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
+    classDef docs fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef config fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    
+    class Core,Session,TaskMgr,ScriptMgr,ScriptTpl,CustomMgr,Completer,Env,Logger coreModule
+    class JavaHook,LocationHook,NativeHook,AdvancedHook,OkHttpHook,NativeModules,NativeCore,NativeCrypto,NativeNetwork,NativeJNI,NativeAntiDebug,NativeOther jsHook
+    class ScriptsDir,UserScript1,UserScript2,UserScriptN,TestScript customScript
+    class Docs,ReadMe,CustomGuide,CustomDemo,CleanupSummary docs
+    class Requirements,Frida,Rich config
+```
+
+### 📂 目录结构
 
 ```
 fridac/
-├── fridac                    # 主程序文件（CLI 入口）
-├── frida_common_new.js       # Java Hook 工具集（新）
-├── frida_native_common.js    # Native Hook 工具集（单文件版，或加载 frida_native/ 模块）
-├── frida_native/             # Native Hook 模块化脚本目录
-├── frida_location_hooks_new.js # 定位 Hook 工具集（新）
-├── frida_okhttp_logger.js    # OkHttp Logger 插件（抓包与重放，历史/重放）
-├── frida_advanced_tracer.js  # 高级追踪工具（基于 r0tracer）
-├── fridac_core/              # Python 核心模块（session/task/script 等）
-├── requirements.txt          # Python 依赖
-├── ADVANCED_FEATURES.md      # 高级功能说明
-├── FEATURE_SUMMARY.md        # 功能总结
-└── README.md                 # 项目文档（本文件）
+├── 🚀 核心系统
+│   ├── fridac                        # CLI 主入口
+│   ├── fridac_core/                  # Python 核心模块
+│   │   ├── session.py                # 会话管理
+│   │   ├── task_manager.py           # 任务系统
+│   │   ├── script_manager.py         # 脚本管理
+│   │   ├── script_templates.py       # 脚本模板
+│   │   ├── custom_scripts.py         # 自定义脚本管理
+│   │   ├── completer.py              # 智能补全
+│   │   ├── environment.py            # 环境检测
+│   │   └── logger.py                 # 日志系统
+│   └── requirements.txt              # Python 依赖
+├── 🔧 JavaScript Hook 工具
+│   ├── frida_common_new.js           # Java Hook 工具集
+│   ├── frida_location_hooks_new.js   # 定位 Hook 工具
+│   ├── frida_native_common.js        # Native Hook 工具
+│   ├── frida_advanced_tracer.js      # 高级追踪工具
+│   ├── frida_okhttp_logger.js        # OkHttp Logger 插件
+│   └── frida_native/                 # Native Hook 模块
+│       ├── frida_native_core.js      # 核心功能
+│       ├── frida_native_crypto.js    # 加密算法 Hook
+│       ├── frida_native_network.js   # 网络函数 Hook
+│       ├── frida_native_jni.js       # JNI 函数 Hook
+│       ├── frida_native_anti_debug.js # 反调试检测
+│       └── ... (其他模块)
+├── 🎨 自定义脚本系统
+│   ├── scripts/                      # 用户自定义脚本目录
+│   │   ├── network_monitor.js        # 网络监控工具
+│   │   ├── crypto_detector.js        # 加密检测工具
+│   │   └── ... (用户自定义)
+│   └── test_custom_scripts.py        # 功能测试脚本
+└── 📚 文档系统
+    ├── README.md                     # 项目主文档
+    ├── CUSTOM_SCRIPTS_GUIDE.md       # 自定义脚本完整指南
+    ├── CUSTOM_SCRIPTS_DEMO.md        # 功能演示说明
+    └── PROJECT_CLEANUP_SUMMARY.md    # 项目清理总结
 ```
+
+### 🔗 核心特性
+
+- **🏗️ 模块化架构**: 清晰分离核心系统、Hook工具和用户扩展
+- **🎯 任务管理**: 每个Hook操作创建独立任务，支持完整生命周期管理
+- **🎨 自定义扩展**: 用户脚本自动发现、解析和集成
+- **💡 智能交互**: Tab补全、命令历史、函数帮助一应俱全
+- **📋 完整文档**: 从入门指南到开发规范，文档齐备
 
 ## ⚙️ 智能补全功能
 

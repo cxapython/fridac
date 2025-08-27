@@ -15,6 +15,7 @@ except ImportError:
     RICH_AVAILABLE = False
 
 from .logger import get_console
+from .script_manager import get_custom_script_manager
 
 class FridacCompleter:
     """fridac 命令的增强自动补全（支持 rich 展示）"""
@@ -105,8 +106,15 @@ class FridacCompleter:
             'help': ('❓ 显示帮助信息', "help()"),
             'q': ('🚪 退出程序', "q"),
             'quit': ('🚪 退出程序', "quit"),
-            'exit': ('🚪 退出程序', "exit")
+            'exit': ('🚪 退出程序', "exit"),
+            
+            # 自定义脚本管理命令
+            'reload_scripts': ('🔄 重新加载自定义脚本', "reload_scripts"),
+            'reloadscripts': ('🔄 重新加载自定义脚本', "reloadscripts")
         }
+        
+        # 加载自定义函数
+        self._load_custom_functions()
         
         # Common Java class patterns for suggestions with categories
         self.common_patterns = {
@@ -129,6 +137,35 @@ class FridacCompleter:
                 'Fragment', 'BroadcastReceiver', 'ContentProvider'
             ]
         }
+    
+    def _load_custom_functions(self):
+        """加载自定义函数到补全列表"""
+        try:
+            custom_manager = get_custom_script_manager()
+            if custom_manager:
+                custom_functions = custom_manager.get_all_functions()
+                for func_name, func_info in custom_functions.items():
+                    self.functions[func_name] = (
+                        f"🔧 自定义: {func_info.description}",
+                        func_info.example
+                    )
+        except Exception:
+            # 如果自定义脚本管理器还未初始化，忽略错误
+            pass
+    
+    def reload_custom_functions(self):
+        """重新加载自定义函数（用于脚本重载后）"""
+        # 移除现有的自定义函数
+        to_remove = []
+        for func_name, (desc, _) in self.functions.items():
+            if desc.startswith("🔧 自定义:"):
+                to_remove.append(func_name)
+        
+        for func_name in to_remove:
+            del self.functions[func_name]
+        
+        # 重新加载
+        self._load_custom_functions()
     
     # 已移除未使用的 show_completion_help 方法
     

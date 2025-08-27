@@ -5,7 +5,8 @@ fridac Frida脚本管理器模块
 
 import os
 
-from .logger import log_error, log_debug, log_warning, log_info
+from .logger import log_error, log_debug, log_warning, log_info, log_success
+from .custom_scripts import CustomScriptManager
 
 def create_frida_script():
     """创建包含全部工具函数的 Frida 脚本"""
@@ -38,6 +39,9 @@ def create_frida_script():
     js_content += _load_location_hooks()
     js_content += _load_okhttp_logger_plugin()
     js_content += _load_advanced_tracer()
+    
+    # 加载自定义脚本
+    js_content += _load_custom_scripts(script_path)
     
     # 添加交互式 Shell 初始化与 Java.perform 包装
     js_content = _wrap_with_java_perform(js_content)
@@ -168,6 +172,48 @@ def _load_advanced_tracer():
         log_debug("未找到 frida_advanced_tracer.js，高级追踪工具不可用")
     
     return ""
+
+def _load_custom_scripts(script_path):
+    """加载用户自定义脚本"""
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    try:
+        # 初始化自定义脚本管理器
+        custom_manager = CustomScriptManager(base_dir)
+        
+        # 扫描并加载脚本
+        loaded_count = custom_manager.scan_scripts()
+        
+        if loaded_count == 0:
+            log_debug("未找到自定义脚本")
+            return ""
+        
+        # 生成导入代码
+        custom_imports = custom_manager.generate_script_imports()
+        custom_exports = custom_manager.generate_rpc_exports()
+        
+        log_success(f"✅ 已加载 {loaded_count} 个自定义脚本，包含 {len(custom_manager.get_all_functions())} 个函数")
+        
+        # 将自定义脚本管理器保存为全局变量，供其他模块使用
+        globals()['_custom_script_manager'] = custom_manager
+        
+        return f'''
+
+// ===== 自定义脚本加载 =====
+{custom_imports}
+
+// 自定义函数导出占位符（将在 _wrap_with_java_perform 中处理）
+/* CUSTOM_EXPORTS_PLACEHOLDER */
+
+'''
+        
+    except Exception as e:
+        log_error(f"加载自定义脚本失败: {e}")
+        return ""
+
+def get_custom_script_manager():
+    """获取自定义脚本管理器实例"""
+    return globals().get('_custom_script_manager', None)
 
     
 
@@ -409,6 +455,26 @@ function help() {
     LOG("  loadNativeSupport() - 加载Native Hook工具", { c: Color.White });
     LOG("  help() - 显示此帮助", { c: Color.White });
     
+    // 显示自定义函数（如果存在）
+    try {
+        if (typeof _custom_script_manager !== 'undefined' && _custom_script_manager) {
+            var customFunctions = _custom_script_manager.get_all_functions();
+            if (customFunctions && Object.keys(customFunctions).length > 0) {
+                LOG("\\n🔧 自定义函数:", { c: Color.Green });
+                Object.keys(customFunctions).forEach(function(funcName) {
+                    var funcInfo = customFunctions[funcName];
+                    LOG("  " + funcName + "() - " + funcInfo.description, { c: Color.White });
+                    LOG("    示例: " + funcInfo.example, { c: Color.Yellow });
+                });
+                LOG("\\n💡 自定义脚本管理:", { c: Color.Green });
+                LOG("  reload_scripts - 重新加载自定义脚本", { c: Color.White });
+                LOG("  scripts目录: " + _custom_script_manager.scripts_dir, { c: Color.Gray });
+            }
+        }
+    } catch (e) {
+        // 忽略自定义函数显示错误
+    }
+    
     LOG("\\n💡 使用提示:", { c: Color.Green });
     LOG("  • 使用 Tab 键自动补全函数名和包名", { c: Color.Gray });
     LOG("  • 支持链式调用和复杂表达式", { c: Color.Gray });
@@ -416,6 +482,7 @@ function help() {
     LOG("  • 所有函数都支持丰富的参数选项", { c: Color.Gray });
     LOG("  • 建议先使用smartTrace()进行智能识别", { c: Color.Gray });
     LOG("  • 长期监控建议使用带Job的函数版本", { c: Color.Gray });
+    LOG("  • 自定义脚本放在scripts/目录下，支持热重载", { c: Color.Gray });
     LOG("\\n" + "=".repeat(75) + "\\n", { c: Color.Gray });
 }
 
@@ -538,7 +605,10 @@ rpc.exports = {
     uniqBy: (typeof uniqBy !== 'undefined') ? uniqBy : function() { try { LOG('uniqBy 未加载（可能需要 Native 工具）', { c: Color.Yellow }); } catch(_) {} return null; },
     bytesToString: (typeof bytesToString !== 'undefined') ? bytesToString : function(arr) { try { if (typeof __bytesToString !== 'undefined') return __bytesToString(arr, null); } catch(_) {} try { return String(arr); } catch(__) { return ''; } },
     LOG: LOG,
-    Color: Color
+    Color: Color,
+    
+    // ===== 自定义函数导出 =====
+    /* CUSTOM_EXPORTS_WILL_BE_INSERTED_HERE */
 };
 
 // 自动包装函数，添加任务管理
@@ -610,4 +680,16 @@ LOG("💡 输入 q 或 exit 退出程序\\n", { c: Color.Cyan });
 }); // End of Java.perform
 '''
     
-    return wrapper_start + js_content + wrapper_end
+    # 处理自定义函数导出
+    final_content = wrapper_start + js_content + wrapper_end
+    
+    # 获取自定义脚本管理器并插入导出
+    custom_manager = globals().get('_custom_script_manager', None)
+    if custom_manager:
+        custom_exports = custom_manager.generate_rpc_exports()
+        final_content = final_content.replace(
+            '/* CUSTOM_EXPORTS_WILL_BE_INSERTED_HERE */', 
+            custom_exports
+        )
+    
+    return final_content

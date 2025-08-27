@@ -20,7 +20,15 @@ alwaysApply: true
 - Java Hook 无法完全 detach，只能状态管理
 - Native Hook 可通过 `Interceptor.detach()` 完全移除
 
+### 第五步：自定义脚本问题
+1. **脚本未加载**: 检查 `scripts/` 目录是否存在，文件是否为 `.js` 扩展名
+2. **函数未识别**: 检查 JSDoc 注释格式，确保 `function` 关键字和参数格式正确
+3. **Tab补全缺失**: 运行 `reload_scripts` 更新补全列表
+4. **任务创建失败**: 检查函数语法错误，查看错误日志
+5. **导入错误**: 确认 [custom_scripts.py](mdc:fridac/fridac_core/custom_scripts.py) 中的日志函数导入正确
+
 ### 快速修复
 1. 立即改为同步枚举 API（如 `enumerateLoadedClassesSync`）
 2. 按导出链路逐项验证并补齐导出
 3. 明确限制，必要时重启应用以彻底清理 Hook
+4. **自定义脚本**: 使用 `reload_scripts` 重新加载，检查语法和 JSDoc 格式

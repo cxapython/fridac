@@ -28,7 +28,7 @@ except ImportError:
 
 from .logger import log_info, log_success, log_error, log_debug, get_console, render_structured_event
 from .completer import FridacCompleter
-from .script_manager import create_frida_script
+from .script_manager import create_frida_script, get_custom_script_manager
 from .task_manager import FridaTaskManager, TaskType, TaskStatus
 from .script_templates import ScriptTemplateEngine
 
@@ -895,6 +895,15 @@ def _handle_task_commands(session, user_input):
         _show_task_help()
         return True
     
+    # 自定义脚本重载命令
+    elif cmd in ['reload_scripts', 'reloadscripts']:
+        _handle_reload_scripts()
+        return True
+    
+    # 检查是否是自定义函数命令
+    elif _handle_custom_function_command(session, cmd, parts):
+        return True
+    
     return False
 
 def _normalize_cli_syntax(user_input):
@@ -1055,3 +1064,93 @@ def _show_basic_interactive_info():
     print("📚 输入 help() 查看所有可用函数")
     print("🚪 输入 q 或 exit 退出")
     print("="*60 + "\n")
+
+def _handle_reload_scripts():
+    """处理脚本重载命令"""
+    try:
+        custom_manager = get_custom_script_manager()
+        if custom_manager:
+            count = custom_manager.reload_scripts()
+            log_success(f"🔄 已重新加载 {count} 个自定义脚本")
+            
+            # 更新补全器
+            try:
+                completer = FridacCompleter()
+                completer.reload_custom_functions()
+                readline.set_completer(completer.complete)
+                log_debug("✅ 补全器已更新")
+            except Exception as e:
+                log_warning(f"⚠️ 更新补全器失败: {e}")
+        else:
+            log_warning("⚠️ 自定义脚本管理器未初始化")
+    except Exception as e:
+        log_error(f"❌ 重载脚本失败: {e}")
+
+def _handle_custom_function_command(session, cmd, parts):
+    """
+    处理自定义函数命令
+    
+    Args:
+        session: FridacSession实例
+        cmd: 命令名
+        parts: 命令参数列表
+        
+    Returns:
+        bool: 是否处理了该命令
+    """
+    try:
+        custom_manager = get_custom_script_manager()
+        if not custom_manager:
+            return False
+        
+        # 检查是否是自定义函数
+        custom_function = custom_manager.get_function(cmd)
+        if not custom_function:
+            return False
+        
+        log_info(f"🎯 执行自定义函数: {cmd}")
+        
+        # 构建JavaScript调用
+        if len(parts) > 1:
+            # 有参数
+            args = ', '.join([f"'{arg}'" if not arg.isdigit() and arg.lower() not in ['true', 'false'] else arg 
+                             for arg in parts[1:]])
+            js_call = f"{cmd}({args})"
+        else:
+            # 无参数
+            js_call = f"{cmd}()"
+        
+        # 如果函数支持任务管理，创建任务
+        if custom_function.task_capable and session.task_manager and session.script_engine:
+            try:
+                # 生成自定义脚本任务
+                script_source = session.script_engine.generate_custom_script(
+                    f"Java.perform(function() {{ {js_call}; }});", 0  # task_id will be set by manager
+                )
+                
+                task_id = session.task_manager.create_task(
+                    TaskType.CUSTOM_HOOK,
+                    cmd,
+                    script_source,
+                    f"自定义函数: {cmd}",
+                    {'custom_function': cmd, 'args': parts[1:] if len(parts) > 1 else []}
+                )
+                
+                if task_id > 0:
+                    log_success(f"✅ 自定义函数任务已创建: #{task_id}")
+                else:
+                    # 降级到直接执行
+                    session.execute_js(js_call)
+                    
+            except Exception as e:
+                log_warning(f"⚠️ 创建自定义函数任务失败，降级到直接执行: {e}")
+                session.execute_js(js_call)
+        else:
+            # 直接执行
+            session.execute_js(js_call)
+        
+        return True
+        
+    except Exception as e:
+        log_error(f"❌ 执行自定义函数失败: {e}")
+        return False
