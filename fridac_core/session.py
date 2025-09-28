@@ -9,6 +9,8 @@ import frida
 import readline
 import atexit
 import os
+import time
+import re
 
 try:
     import rlcompleter
@@ -26,21 +28,77 @@ try:
 except ImportError:
     RICH_AVAILABLE = False
 
-from .logger import log_info, log_success, log_error, log_debug, get_console, render_structured_event
+from .logger import log_info, log_success, log_error, log_debug, log_warning, log_exception, get_console, render_structured_event
 from .completer import FridacCompleter
 from .script_manager import create_frida_script, get_custom_script_manager
 from .task_manager import FridaTaskManager, TaskType, TaskStatus
 from .script_templates import ScriptTemplateEngine
 
-# 命令历史记录文件
+# 命令历史记录文件（默认路径；实际读取时有回退逻辑）
 HISTORY_FILE = os.path.expanduser("~/.fridac_history")
 
 def setup_history():
     """设置命令历史与自动补全"""
+    # 选择历史文件路径，必要时回退到临时目录
+    history_path = None
     try:
-        readline.read_history_file(HISTORY_FILE)
+        history_path = HISTORY_FILE
+    except Exception:
+        history_path = None
+
+    # 读取历史：若失败则切换到临时路径
+    def _ensure_read_history(path: str) -> str:
+        try:
+            # 若路径存在但不是文件，视为无效
+            if os.path.exists(path) and not os.path.isfile(path):
+                raise OSError(22, "Invalid history path (not a regular file)")
+            # 若历史文件不存在则创建空文件
+            if not os.path.exists(path):
+                try:
+                    with open(path, 'a', encoding='utf-8'):
+                        pass
+                except Exception:
+                    # 创建失败也允许继续，read_history_file 将再尝试
+                    pass
+            # 读取历史
+            try:
+                readline.read_history_file(path)
+            except FileNotFoundError:
+                # 忽略：无历史文件
+                pass
+            return path
+        except Exception as e:
+            # 切换到临时历史文件
+            log_warning(f"历史文件读取失败，切换到临时路径: {e}")
+            try:
+                import tempfile
+                alt = os.path.join(tempfile.gettempdir(), "fridac_history")
+                if os.path.exists(alt) and not os.path.isfile(alt):
+                    # 不应发生，强制改名或忽略，最终重新创建文件
+                    try:
+                        os.remove(alt)
+                    except Exception:
+                        pass
+                if not os.path.exists(alt):
+                    try:
+                        with open(alt, 'a', encoding='utf-8'):
+                            pass
+                    except Exception:
+                        pass
+                try:
+                    readline.read_history_file(alt)
+                except FileNotFoundError:
+                    pass
+                return alt
+            except Exception:
+                # 最终放弃历史功能（不影响交互）
+                return None
+
+    history_path = _ensure_read_history(history_path or HISTORY_FILE)
+    # 设置历史条数上限
+    try:
         readline.set_history_length(1000)
-    except FileNotFoundError:
+    except Exception:
         pass
     
     # 设置自动补全
@@ -70,10 +128,30 @@ def setup_history():
     readline.set_completer_delims(' \t\n`!@#$%^&*()=+[{]}\\|;:,<>?')
     
     def save_history():
+        # 优先写回当前使用的历史路径，失败则尝试临时路径
+        targets = []
+        if history_path:
+            targets.append(history_path)
         try:
-            readline.write_history_file(HISTORY_FILE)
-        except:
+            import tempfile
+            targets.append(os.path.join(tempfile.gettempdir(), "fridac_history"))
+        except Exception:
             pass
+        for target in targets:
+            try:
+                # 确保目录存在（通常为用户主目录或 /tmp）
+                parent = os.path.dirname(target)
+                if parent and not os.path.exists(parent):
+                    try:
+                        os.makedirs(parent, exist_ok=True)
+                    except Exception:
+                        pass
+                readline.write_history_file(target)
+                return
+            except Exception:
+                continue
+        # 若全部失败则忽略
+        return
     
     atexit.register(save_history)
 
@@ -219,7 +297,60 @@ class FridacSession:
             else:
                 # Attach 模式
                 log_info("连接到应用: {}".format(app_name))
-                self.target_process = self.device.attach(app_name)
+                # 先尝试按名称直接 attach，失败则回退到解析 PID 再 attach
+                try:
+                    self.target_process = self.device.attach(app_name)
+                except frida.ProcessNotFoundError:
+                    # 回退 1：通过 enumerate_applications() 解析 PID
+                    pid = None
+                    try:
+                        apps = self.device.enumerate_applications()
+                        for app in apps:
+                            try:
+                                identifier = getattr(app, 'identifier', None)
+                                name = getattr(app, 'name', None)
+                                if identifier == app_name or name == app_name:
+                                    pid = getattr(app, 'pid', 0) or None
+                                    if pid:
+                                        break
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+
+                    # 回退 2：直接遍历进程，匹配名称（优先精确匹配）
+                    if not pid:
+                        try:
+                            procs = self.device.enumerate_processes()
+                            exact = [p for p in procs if getattr(p, 'name', '') == app_name]
+                            if exact:
+                                pid = exact[0].pid
+                            else:
+                                candidates = [p for p in procs if app_name in getattr(p, 'name', '')]
+                                if candidates:
+                                    pid = candidates[0].pid
+                        except Exception:
+                            pass
+
+                    # 回退 3：短暂轮询等待（某些应用在切前后台或冷启动时进程列表滞后）
+                    if not pid:
+                        for _ in range(10):  # 最多等待 ~5s
+                            try:
+                                procs = self.device.enumerate_processes()
+                                exact = [p for p in procs if getattr(p, 'name', '') == app_name]
+                                if exact:
+                                    pid = exact[0].pid
+                                    break
+                            except Exception:
+                                pass
+                            time.sleep(0.5)
+
+                    if pid:
+                        self.target_process = self.device.attach(pid)
+                    else:
+                        # 维持与原有异常一致的语义，由外层捕获统一提示
+                        raise
+
                 log_success("已连接到运行中的应用")
             
             # 加载并创建脚本
@@ -444,11 +575,40 @@ def run_interactive_session(session):
     else:
         _show_basic_interactive_info()
     
+    # 非交互环境降级提示
+    try:
+        stdin_is_tty = sys.stdin.isatty()
+    except Exception:
+        stdin_is_tty = True
+    if not stdin_is_tty:
+        log_warning("检测到非交互输入环境（可能通过管道或不支持的终端运行），输入将降级处理。建议直接在终端运行 fridac 以获得最佳体验。")
+
+    # 简单的输入读取封装，处理 OSError(Errno 22) 等异常
+    def _read_user_input(prompt: str) -> str:
+        try:
+            return input(prompt)
+        except OSError as e:
+            # 回退到低级读取
+            try:
+                sys.stdout.write(prompt)
+                sys.stdout.flush()
+            except Exception:
+                pass
+            try:
+                line = sys.stdin.readline()
+                # 若仍失败，则抛回原错误
+                if line is None:
+                    raise e
+                return line
+            except Exception:
+                # 无法读取，抛回让上层处理
+                raise e
+
     # 交互循环
     while session.running:
         try:
-            # 始终使用标准输入以启用 readline Tab 补全
-            user_input = input("fridac> ").strip()
+            # 使用封装后的读取方法
+            user_input = _read_user_input("fridac> ").strip()
             
             if not user_input:
                 continue
@@ -469,6 +629,9 @@ def run_interactive_session(session):
             # Execute JavaScript code
             session.execute_js(user_input)
             
+        except OSError as e:
+            log_exception("I/O 错误", e)
+            break
         except KeyboardInterrupt:
             log_info("正在退出...")
             break
@@ -833,6 +996,53 @@ def _handle_task_commands(session, user_input):
         if task_id > 0:
             log_success(f"✅ URL Hook任务已创建: #{task_id}")
         return True
+
+    # 生成方法 Hook 脚本到 scripts/ 目录
+    elif cmd == 'genm':
+        # 用法: genm a.b.c.d output_name
+        if len(parts) < 3:
+            log_error("❌ 用法: genm <class.method> <outfile>")
+            return True
+        target = parts[1]
+        outfile = parts[2]
+
+        # 校验 target 形如 a.b.c.d
+        if '.' not in target:
+            log_error("❌ 目标格式错误，应为: 包.类.方法，例如 com.example.Class.method")
+            return True
+
+        try:
+            # 计算 scripts 目录
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            scripts_dir = os.path.join(base_dir, 'scripts')
+            os.makedirs(scripts_dir, exist_ok=True)
+
+            # 归一化输出文件名为 .js
+            name_wo_ext = os.path.splitext(os.path.basename(outfile))[0]
+            js_filename = name_wo_ext + '.js'
+            js_path = os.path.join(scripts_dir, js_filename)
+
+            # 生成函数名（仅字母数字与下划线）
+            sanitized = re.sub(r"[^A-Za-z0-9_]", "_", target)
+            func_name = f"hook_{sanitized}"
+
+            # 生成 JS 内容（参考 traceMethod，包含 ClassLoader 回退、重载、参数与类型打印、调用栈）
+            js_code = f"""/**\n * 自动生成的方法 Hook (参考 traceMethod)\n * @description Hook 目标: {target}\n * @example {func_name}()\n */\nfunction {func_name}() {{\n    Java.perform(function() {{\n        try {{\n            var fullyQualifiedMethodName = '{target}';\n            var lastDotIndex = fullyQualifiedMethodName.lastIndexOf('.');\n            if (lastDotIndex === -1) {{\n                LOG('❌ 方法名格式错误，应为: 包.类.方法', {{ c: Color.Red }});\n                return;\n            }}\n\n            var className = fullyQualifiedMethodName.substring(0, lastDotIndex);\n            var methodName = fullyQualifiedMethodName.substring(lastDotIndex + 1);\n\n            var targetClass = null;\n            try {{\n                targetClass = Java.use(className);\n            }} catch (error) {{\n                if ((error.message || '').indexOf('ClassNotFoundException') !== -1) {{\n                    LOG('❌ 类未在默认ClassLoader中找到，搜索其他ClassLoader...', {{ c: Color.Yellow }});\n                    var loader = (typeof findTragetClassLoader === 'function') ? findTragetClassLoader(className) : null;\n                    if (loader) {{\n                        targetClass = Java.ClassFactory.get(loader).use(className);\n                        LOG('🎯 成功使用自定义ClassLoader加载类', {{ c: Color.Green }});\n                    }} else {{\n                        LOG('❌ 在所有ClassLoader中都未找到类: ' + className, {{ c: Color.Red }});\n                        return;\n                    }}\n                }} else {{\n                    throw error;\n                }}\n            }}\n\n            if (!targetClass || !targetClass[methodName]) {{\n                LOG('❌ 未找到方法: ' + fullyQualifiedMethodName, {{ c: Color.Red }});\n                return;\n            }}\n\n            // 本地参数类型获取（与 frida_common_new.js 保持一致风格）\n            function __getArgType(value) {{\n                try {{\n                    if (value === null) return 'null';\n                    if (typeof value === 'undefined') return 'undefined';\n                    if (value && typeof value.getClass === 'function') {{\n                        try {{ return String(value.getClass().getName()); }} catch(_e) {{}}\n                    }}\n                    if (value && value.$className) {{\n                        try {{ return String(value.$className); }} catch(_e) {{}}\n                    }}\n                    if (value && value.class && typeof value.class.getName === 'function') {{\n                        try {{ return String(value.class.getName()); }} catch(_e) {{}}\n                    }}\n                    var t = typeof value;\n                    if (t === 'object') {{\n                        try {{ return Object.prototype.toString.call(value); }} catch(_e) {{}}\n                    }}\n                    return t;\n                }} catch (_ignored) {{\n                    return 'unknown';\n                }}\n            }}\n\n            var wrapper = targetClass[methodName];\n            var overloads = wrapper.overloads || [];\n\n            if (overloads.length > 0) {{\n                LOG('🔀 发现 ' + overloads.length + ' 个重载，逐个设置Hook...', {{ c: Color.Blue }});\n                for (var i = 0; i < overloads.length; i++) {{\n                    try {{\n                        (function(over){{\n                            over.implementation = function() {{\n                                LOG('\n*** 进入 ' + fullyQualifiedMethodName, {{ c: Color.Green }});\n                                try {{ printStack(); }} catch(_s) {{}}\n                                if (arguments.length > 0) {{\n                                    LOG('📥 参数:', {{ c: Color.Blue }});\n                                    for (var j = 0; j < arguments.length; j++) {{\n                                        var __t = __getArgType(arguments[j]);\n                                        LOG('  arg[' + j + '] (' + __t + '): ' + arguments[j], {{ c: Color.White }});\n                                    }}\n                                }}\n                                var retval = over.apply(this, arguments);\n                                LOG('📤 返回值: ' + retval, {{ c: Color.Blue }});\n                                LOG('🏁 退出 ' + fullyQualifiedMethodName + '\n', {{ c: Color.Green }});\n                                return retval;\n                            }};\n                        }})(overloads[i]);\n                    }} catch (_e) {{}}\n                }}\n            }} else {{\n                // 兜底：无 overload 信息时直接设置\n                wrapper.implementation = function() {{\n                    LOG('\n*** 进入 ' + fullyQualifiedMethodName, {{ c: Color.Green }});\n                    try {{ printStack(); }} catch(_s) {{}}\n                    if (arguments.length > 0) {{\n                        LOG('📥 参数:', {{ c: Color.Blue }});\n                        for (var k = 0; k < arguments.length; k++) {{\n                            var __t2 = __getArgType(arguments[k]);\n                            LOG('  arg[' + k + '] (' + __t2 + '): ' + arguments[k], {{ c: Color.White }});\n                        }}\n                    }}\n                    var retval2 = this[methodName].apply(this, arguments);\n                    LOG('📤 返回值: ' + retval2, {{ c: Color.Blue }});\n                    LOG('🏁 退出 ' + fullyQualifiedMethodName + '\n', {{ c: Color.Green }});\n                    return retval2;\n                }};\n            }}\n\n            LOG('✅ 方法Hook设置成功: ' + fullyQualifiedMethodName, {{ c: Color.Green }});\n        }} catch (e) {{\n            LOG('❌ 方法Hook设置失败: ' + e.message, {{ c: Color.Red }});\n        }}\n    }});\n}}\n"""
+
+            # 写入文件
+            with open(js_path, 'w', encoding='utf-8') as f:
+                f.write(js_code)
+
+            log_success(f"✅ 已生成自定义脚本: {js_path}")
+            log_info("🔄 正在重载自定义脚本以便立即可用...")
+            try:
+                _handle_reload_scripts()
+            except Exception as e:
+                log_warning(f"⚠️ 重载失败，请手动执行 reload_scripts: {e}")
+            return True
+        except Exception as e:
+            log_error(f"❌ 生成脚本失败: {e}")
+            return True
 
     elif cmd == 'hookfetch':
         # 语法: hookfetch [filter_string]

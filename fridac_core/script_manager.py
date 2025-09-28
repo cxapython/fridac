@@ -202,7 +202,7 @@ def _load_custom_scripts(script_path):
 // ===== 自定义脚本加载 =====
 {custom_imports}
 
-// 自定义函数导出占位符（将在 _wrap_with_java_perform 中处理）
+// 自定义函数导出占位符（实际注入发生在 rpc.exports 中）
 /* CUSTOM_EXPORTS_PLACEHOLDER */
 
 '''
@@ -249,6 +249,9 @@ try {
 } catch (_) {}
 
 Java.perform(function() {
+    try {
+        // banner 由 Python 端打印
+    } catch(_) {}
     // ===== 兼容层：为模块化 Native 工具补齐旧版便捷函数 =====
     try {
         if (typeof global === 'undefined') { global = this; }
