@@ -279,26 +279,30 @@ function monitorSensitiveNetwork(sensitiveFields) {
         
         loaded_count = 0
         error_count = 0
-        
-        for filename in os.listdir(self.scripts_dir):
-            if not filename.endswith('.js'):
-                continue
-            
-            file_path = os.path.join(self.scripts_dir, filename)
-            
-            try:
-                if self._load_script(file_path):
-                    loaded_count += 1
-                else:
+
+        # 递归扫描 scripts/ 子目录，支持按文件夹分类
+        for dirpath, _dirnames, filenames in os.walk(self.scripts_dir):
+            for filename in filenames:
+                if not filename.endswith('.js'):
+                    continue
+
+                file_path = os.path.join(dirpath, filename)
+                # 使用相对路径作为脚本唯一键，避免同名文件冲突
+                rel_key = os.path.relpath(file_path, self.scripts_dir)
+
+                try:
+                    if self._load_script(file_path, rel_key):
+                        loaded_count += 1
+                    else:
+                        error_count += 1
+                except Exception as e:
+                    log_error(f"❌ 加载脚本失败 {rel_key}: {e}")
                     error_count += 1
-            except Exception as e:
-                log_error(f"❌ 加载脚本失败 {filename}: {e}")
-                error_count += 1
         
         log_success(f"✅ 脚本扫描完成: 成功 {loaded_count}, 失败 {error_count}")
         return loaded_count
     
-    def _load_script(self, file_path: str) -> bool:
+    def _load_script(self, file_path: str, key_name: Optional[str] = None) -> bool:
         """
         加载单个脚本文件
         
@@ -309,13 +313,14 @@ function monitorSensitiveNetwork(sensitiveFields) {
             是否加载成功
         """
         try:
-            filename = os.path.basename(file_path)
+            # 以相对路径作为唯一键，避免同名文件冲突
+            rel_key = key_name or os.path.relpath(file_path, self.scripts_dir)
             stat_info = os.stat(file_path)
             last_modified = stat_info.st_mtime
             
             # 检查是否需要重新加载
-            if filename in self.scripts:
-                existing = self.scripts[filename]
+            if rel_key in self.scripts:
+                existing = self.scripts[rel_key]
                 if existing.last_modified >= last_modified:
                     return True  # 文件未变化，跳过
             
@@ -332,20 +337,20 @@ function monitorSensitiveNetwork(sensitiveFields) {
             # 创建脚本对象
             script = CustomScript(
                 file_path=file_path,
-                file_name=filename,
+                file_name=os.path.basename(file_path),
                 functions=functions,
                 last_modified=last_modified,
                 load_time=datetime.now()
             )
             
             # 保存到管理器
-            self.scripts[filename] = script
+            self.scripts[rel_key] = script
             
             # 更新函数索引
             for func_name, func_info in functions.items():
                 self.functions[func_name] = func_info
             
-            log_success(f"✅ 已加载脚本: {filename} ({len(functions)} 个函数)")
+            log_success(f"✅ 已加载脚本: {rel_key} ({len(functions)} 个函数)")
             return True
             
         except Exception as e:

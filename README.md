@@ -2,6 +2,22 @@
 
 一个集成了 **Java Hook**、**Native Hook** 和 **定位Hook** 的强大 Frida CLI 工具，提供交互式调试环境和智能应用管理功能。
 
+### 🔧 新增场景脚本（scripts/ 目录，支持递归扫描）
+
+- security/
+  - ssl_bypass.js：一键多路径 SSL Pinning 绕过（TrustManager/HostnameVerifier/OkHttp/Conscrypt/BoringSSL）
+  - anti_anti_debug.js：Java 层常见反调试/代理检测绕过
+- monitor/
+  - intent_monitor.js：统一监控 startActivity/startService/sendBroadcast/registerReceiver/onReceive（支持 filter、可选生命周期）
+  - websocket_monitor.js：OkHttp WebSocket 文本/二进制帧监控
+  - activity_events.js：Activity 生命周期追踪
+- tools/
+  - dex_dump.js：运行时 DEX 扫描导出 + dlopen 重挂钩
+  - jni_register_natives_trace.js：RegisterNatives 追踪
+  - webview_enable_debug.js：WebView 调试开关与关键回调监控
+
+使用：在 fridac 交互中执行 `reload_scripts` 后，直接调用上述函数名。
+
 ## ✨ 核心特性
 
 - 🎯 **智能应用连接** - 自动检测前台应用或选择目标应用

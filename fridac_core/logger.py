@@ -5,6 +5,8 @@ fridac 日志系统模块
 
 from datetime import datetime
 import json
+import sys
+import traceback
 
 # Rich 导入（用于美观的终端界面），缺失时优雅降级
 try:
@@ -60,6 +62,48 @@ def log_debug(message, **kwargs):
         console.print(f"[dim]{timestamp}[/dim] [magenta]🔍[/magenta] {message}", **kwargs)
     else:
         print(f"🔍 {message}")
+
+def log_exception(prefix_message, exc: Exception = None):
+    """
+    输出带文件名与行号的异常信息，并附加完整 traceback。
+    Args:
+        prefix_message (str): 前缀提示语，例如 "运行出错"。
+        exc (Exception): 异常对象；若为空则使用当前异常信息。
+    """
+    # 捕获当前异常信息
+    exc_type, exc_value, exc_tb = sys.exc_info()
+    if exc is not None and (exc_value is None or exc_value is exc):
+        # 使用传入异常对象配合当前 traceback
+        exc_value = exc
+    # 提取最后一帧用于快速定位
+    location = None
+    try:
+        if exc_tb is not None:
+            last = traceback.extract_tb(exc_tb)[-1]
+            location = f"{last.filename}:{last.lineno} in {last.name}"
+    except Exception:
+        location = None
+    # 组装标题
+    title = prefix_message
+    if exc_value is not None:
+        title = f"{prefix_message}: {exc_value}"
+    if location:
+        title = f"{title}  (at {location})"
+    # 打印标题
+    log_error(title)
+    # 打印完整 traceback
+    try:
+        tb_text = ''.join(traceback.format_exception(exc_type or type(exc_value), exc_value, exc_tb))
+    except Exception:
+        tb_text = None
+    if tb_text:
+        if RICH_AVAILABLE and console is not None:
+            try:
+                console.print(tb_text)
+            except Exception:
+                print(tb_text)
+        else:
+            print(tb_text)
 
 def show_banner():
     """显示 fridac 横幅（Banner）"""

@@ -26,11 +26,12 @@ import sys
 import os
 import argparse
 import signal
+import traceback
 
 # 将 fridac_core 包加入 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fridac_core.logger import show_banner, log_info, log_success, log_error, log_warning
+from fridac_core.logger import show_banner, log_info, log_success, log_error, log_warning, log_exception
 from fridac_core.environment import (
     detect_python_environment, 
     get_frida_version, 
@@ -68,10 +69,17 @@ def run_frida_session(spawn_mode=False, target_package=None, force_show_apps=Fal
         return
     
     # 进入交互式会话
-    run_interactive_session(session)
-    
-    # 清理
-    session.disconnect()
+    try:
+        run_interactive_session(session)
+    except OSError as e:
+        # 某些环境（非 TTY、管道等）会触发 [Errno 22] Invalid argument
+        log_exception("交互会话 I/O 异常", e)
+    except Exception as e:
+        # 不让异常冒泡到主函数，避免误报“运行出错”
+        log_exception("交互会话发生错误", e)
+    finally:
+        # 清理
+        session.disconnect()
 
 def main():
     """主函数"""
@@ -145,7 +153,7 @@ Examples:
     except KeyboardInterrupt:
         log_info("程序被用户中断")
     except Exception as e:
-        log_error("运行出错: {}".format(e))
+        log_exception(f"运行出错:{traceback.format_exc()}", )
         from fridac_core.logger import is_rich_available
         if not is_rich_available():
             log_warning("建议安装 rich 获得更好的用户体验: pip install rich")
