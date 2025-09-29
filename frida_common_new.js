@@ -412,21 +412,7 @@ function findTragetClassLoader(className) {
 
 // ===== 核心Hook函数 =====
 
-// 智能追踪函数
-function smartTrace(target) {
-    LOG("🎯 智能追踪: " + target, { c: Color.Cyan });
-    
-    // 判断是类还是方法
-    if (target.indexOf('.') !== -1 && 
-        target.indexOf('(') === -1 && 
-        target.match(/\.[a-z]/)) {
-        // 看起来像方法 (com.example.Class.method)
-        return traceMethod(target);
-    } else {
-        // 看起来像类 (com.example.Class)
-        return traceClass(target);
-    }
-}
+// 已移除 smartTrace（请使用 intelligentHookDispatcher）
 
 // 跟踪类的所有方法
 function traceClass(className) {
@@ -1803,7 +1789,6 @@ function help() {
     LOG("=" + "=".repeat(50), { c: Color.Gray });
     
     var commands = [
-        ["smartTrace(target)", "智能追踪类或方法"],
         ["traceClass(className)", "跟踪类的所有方法"],
         ["traceMethod(className.method)", "跟踪特定方法"],
         ["advancedMethodTracing(method, stack, field)", "高级方法追踪"],
@@ -1939,10 +1924,8 @@ function intelligentHookDispatcher(targetIdentifier, hookOptions) {
 // 保持向后兼容性
 var describeJavaClass = describeJavaClassDetails;
 var findStrInMap = hookHashMapToFindValue;
-var smartTrace = intelligentHookDispatcher;
 
 // ===== 全局导出 =====
-global.smartTrace = smartTrace;
 global.intelligentHookDispatcher = intelligentHookDispatcher;
 global.traceClass = traceClass;
 global.traceMethod = traceMethod;

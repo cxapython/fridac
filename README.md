@@ -104,9 +104,9 @@ help()
 // ⚡ 一键自测（定位Hook全套，自动触发并打印命中）
 selftest_all
 
-// 🎯 智能Hook - 自动识别Java/Native
-smartTrace('com.example.MainActivity')  // Java类
-smartTrace('malloc', {showArgs: true})  // Native函数
+// 🎯 智能Hook - 自动识别Java/Native（使用 intelligentHookDispatcher）
+intelligentHookDispatcher('com.example.MainActivity', { enableStackTrace: true })
+intelligentHookDispatcher('malloc', { showArgs: true })
 
 // 🌐 OkHttp Logger 插件（抓包与重放）
 okhttpFind()
@@ -178,7 +178,7 @@ okhttpStart({ filter: 'api/', loaderSample: 'okhttp3.OkHttpClient' })
 
 | 函数名 | 描述 | 使用示例 |
 |--------|------|----------|
-| `smartTrace()` | 🎯 智能识别并Hook目标 | `smartTrace('com.example.MainActivity')` |
+| `intelligentHookDispatcher()` | 🎯 智能识别并Hook目标 | `intelligentHookDispatcher('com.example.MainActivity', {enableStackTrace: true})` |
 | `loadNativeSupport()` | 🔧 加载Native Hook工具 | `loadNativeSupport()` |
 
 ### 🌐 网络抓包与重放（OkHttp 插件）
@@ -367,15 +367,15 @@ fridac> selftest_all
 ✅ 自动创建并触发 url/log/base64/jsonobject/hashmap/arraylist/fileoperations
 
 # 智能跟踪 (自动创建任务)
-fridac> smartTrace('Login')
-🤖 自动注册任务 #3: 自动追踪: smartTrace('Login')
+fridac> intelligentHookDispatcher('Login', { enableStackTrace: true })
+🤖 自动注册任务 #3: 自动追踪: intelligentHookDispatcher('Login')
 
 # 查看所有活跃任务
 fridac> jobs()
 📋 Hook 任务列表
 [#1] [active] 自动追踪: enableAllHooks(1)             📍定位Hook    [25次命中] 1分钟前
 [#2] [active] 自动追踪: nativeEnableAllHooks(1)       🔧Native Hook [8次命中]  30秒前
-[#3] [active] 自动追踪: smartTrace('Login')           🎯智能Hook    [3次命中]  刚刚
+[#3] [active] 自动追踪: intelligentHookDispatcher('Login')  🎯智能Hook    [3次命中]  刚刚
 
 # 如输出过多，可使用 kill 终止指定任务
 fridac> kill 1

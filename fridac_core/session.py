@@ -1237,7 +1237,7 @@ def _show_rich_interactive_info():
         'nativeHookDlopenFamily','nativeHookJNIFunctions','nativeHookCryptoFunctions','nativeHookNetworkFunctions','nativeHookAntiDebug','nativeAnalyzeSO',
         'nativeEnableAllHooks','nativeQuickHookCrypto','nativeQuickHookNetwork','nativeQuickAnalyzeApp',
         # 智能工具
-        'smartTrace','intelligentHookDispatcher','loadNativeSupport'
+        'intelligentHookDispatcher','loadNativeSupport'
     ]
     added = set()
     for name in preferred_order:

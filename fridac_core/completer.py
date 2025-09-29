@@ -35,7 +35,7 @@ class FridacCompleter:
             'objectsearch': ('🧩 搜索实例对象，返回可引用句柄', "objectsearch('com.example.MainActivity', 20)"),
             'classdump': ('📘 输出类结构（--fullname 等效为 true）', "classdump('com.example.MainActivity', true)"),
             'objectdump': ('📦 输出对象字段值（传 objectsearch 返回的句柄）', "objectdump('123456789', true)"),
-            'printStack': ('📚 打印Java调用栈', "printStack()"),
+            # 'printStack': ('📚 打印Java调用栈', "printStack()"),
             'findTragetClassLoader': ('🔗 查找目标类加载器', "findTragetClassLoader('com.example.Class')"),
             'printJavaCallStack': ('📚 打印Java调用栈（新函数名）', "printJavaCallStack(true, 50)"),
             'findStrInMap': ('🗺️ 监控HashMap查找key对应value', "findStrInMap('password', 1)"),
@@ -98,8 +98,7 @@ class FridacCompleter:
             'nativeQuickAnalyzeApp': ('⚡ 快速分析应用', "nativeQuickAnalyzeApp()"),
             
             # 智能工具
-            'smartTrace': ('🎯 智能识别并Hook目标', "smartTrace('com.example.MainActivity')"),
-            'intelligentHookDispatcher': ('🎯 智能识别并Hook目标（新函数名）', "intelligentHookDispatcher('com.example.MainActivity', {enableStackTrace: true})"),
+            'intelligentHookDispatcher': ('🎯 智能识别并Hook目标', "intelligentHookDispatcher('com.example.MainActivity', {enableStackTrace: true})"),
             'loadNativeSupport': ('🔧 加载Native Hook工具', "loadNativeSupport()"),
             
             # 工具函数

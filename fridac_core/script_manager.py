@@ -415,10 +415,8 @@ function help() {
     }
     
     LOG("\\n🎯 智能工具:", { c: Color.Green });
-    LOG("  smartTrace(target, options) / intelligentHookDispatcher(targetIdentifier, hookOptions) - 智能识别并Hook目标", { c: Color.White });
-    LOG("    示例: smartTrace('com.example.MainActivity')", { c: Color.Yellow });
-    LOG("    新示例: intelligentHookDispatcher('com.example.MainActivity', {enableStackTrace: true})", { c: Color.Yellow });
-    LOG("    示例: smartTrace('malloc', {showArgs: true})", { c: Color.Yellow });
+    LOG("  intelligentHookDispatcher(targetIdentifier, hookOptions) - 智能识别并Hook目标", { c: Color.White });
+    LOG("    示例: intelligentHookDispatcher('com.example.MainActivity', {enableStackTrace: true})", { c: Color.Yellow });
     
     LOG("\\n🛠️  工具函数:", { c: Color.Green });
     LOG("  printStack() / printJavaCallStack(showComplete, maxLines) - 打印Java调用栈", { c: Color.White });
@@ -483,7 +481,7 @@ function help() {
     LOG("  • 支持链式调用和复杂表达式", { c: Color.Gray });
     LOG("  • 输入 q 或 exit 退出程序", { c: Color.Gray });
     LOG("  • 所有函数都支持丰富的参数选项", { c: Color.Gray });
-    LOG("  • 建议先使用smartTrace()进行智能识别", { c: Color.Gray });
+    LOG("  • 建议使用 intelligentHookDispatcher() 进行智能识别", { c: Color.Gray });
     LOG("  • 长期监控建议使用带Job的函数版本", { c: Color.Gray });
     LOG("  • 自定义脚本放在scripts/目录下，支持热重载", { c: Color.Gray });
     LOG("\\n" + "=".repeat(75) + "\\n", { c: Color.Gray });
@@ -549,7 +547,6 @@ rpc.exports = {
     // 这些命令通过session.py中的新任务管理系统处理
     
     // 智能工具
-    smartTrace: smartTrace,
     intelligentHookDispatcher: intelligentHookDispatcher,
     loadNativeSupport: typeof loadNativeSupport !== 'undefined' ? loadNativeSupport : function() { 
         LOG("loadNativeSupport 功能未实现", { c: Color.Yellow }); 
