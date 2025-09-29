@@ -1,0 +1,95 @@
+{
+  "description": "fridac 早期 Hook 配置文件",
+  "version": "1.0",
+  "presets": {
+    "jni_analysis": {
+      "description": "JNI 分析套件 - 捕获 Native 方法注册和调用",
+      "hooks": [
+        {
+          "function": "traceRegisterNatives",
+          "args": [],
+          "description": "监控所有 RegisterNatives 调用"
+        },
+        {
+          "function": "hookbase64",
+          "args": [true],
+          "description": "监控 Base64 编解码"
+        },
+        {
+          "function": "hooknewstringutf",
+          "args": [true],
+          "description": "监控字符串创建"
+        }
+      ]
+    },
+    "crypto_analysis": {
+      "description": "加密分析套件 - 监控加密相关操作",
+      "hooks": [
+        {
+          "function": "hookbase64",
+          "args": [true]
+        },
+        {
+          "function": "hookjsonobject",
+          "args": [true]
+        },
+        {
+          "function": "traceRegisterNatives",
+          "args": ["crypto"]
+        }
+      ]
+    },
+    "network_analysis": {
+      "description": "网络分析套件 - 监控网络请求和数据传输",
+      "hooks": [
+        {
+          "function": "hookurl",
+          "args": [true]
+        },
+        {
+          "function": "hookfetch",
+          "args": [""]
+        },
+        {
+          "function": "traceRegisterNatives",
+          "args": ["okhttp"]
+        }
+      ]
+    },
+    "anti_debug": {
+      "description": "反调试分析套件 - 监控反调试检测",
+      "hooks": [
+        {
+          "function": "traceRegisterNatives",
+          "args": []
+        },
+        {
+          "function": "hookfileoperations",
+          "args": [true]
+        },
+        {
+          "function": "hooklog",
+          "args": [true]
+        }
+      ]
+    }
+  },
+  "custom_hooks": {
+    "description": "自定义 Hook 配置示例",
+    "example_app": {
+      "package": "com.example.app",
+      "hooks": [
+        {
+          "function": "traceRegisterNatives",
+          "args": ["mylib"],
+          "description": "监控特定 SO 库的 Native 方法注册"
+        },
+        {
+          "function": "traceMethod",
+          "args": ["com.example.app.MainActivity.onCreate"],
+          "description": "监控主活动创建"
+        }
+      ]
+    }
+  }
+}

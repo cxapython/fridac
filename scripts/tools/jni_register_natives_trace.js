@@ -1,6 +1,13 @@
 
-    // 统一日志 - 美化版本
+    // 统一日志 - 美化版本（使用 send 确保输出重定向生效）
 function __LOG(msg, opts = {}) {
+    // 尝试使用全局 LOG 函数（如果可用）
+    if (typeof LOG !== 'undefined') {
+        LOG(msg, opts);
+        return;
+    }
+    
+    // 回退到 send 方式
     const colorMap = {
         Cyan: '\x1b[36m',
         White: '\x1b[37m',
@@ -21,8 +28,22 @@ function __LOG(msg, opts = {}) {
     const timestamp = new Date().toLocaleTimeString();
     const prefix = `${colorMap.Dim}[${timestamp}]${colorMap.Reset} 🔍 `;
     
-    console.log(`${prefix}${bold}${color}${msg}${colorMap.Reset}`);
+    const formattedMsg = `${prefix}${bold}${color}${msg}${colorMap.Reset}`;
+    
+    // 使用 send 发送到 Python 端，确保输出重定向生效
+    try {
+        send(formattedMsg);
+    } catch (e) {
+        // 如果 send 失败，回退到 console.log
+        console.log(formattedMsg);
+    }
 }
+/**
+ * 追踪 JNI RegisterNatives 调用，捕获早期 Native 方法注册
+ * @description 在 spawn 模式下特别有用，可以捕获应用启动时的 Native 方法注册
+ * @param {string} targetSo - 可选，指定要监控的 SO 库名称，为空则监控所有
+ * @example traceRegisterNatives("mylib")
+ */
 function traceRegisterNatives(targetSo) {
     __LOG("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", { c: "Cyan", bold: true });
     __LOG("🚀 JNI RegisterNatives 追踪器启动", { c: "Cyan", bold: true });

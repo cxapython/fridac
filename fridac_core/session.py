@@ -169,6 +169,61 @@ class FridacSession:
         self.task_manager = None
         self.script_engine = None
         
+        # 输出重定向
+        self.output_file = None
+        self.output_handle = None
+        self.append_mode = False
+    
+    def setup_output_redirect(self, output_file, append_mode=False):
+        """设置输出重定向到文件"""
+        try:
+            self.output_file = os.path.abspath(output_file)
+            self.append_mode = append_mode
+            
+            # 创建目录（如果不存在）
+            output_dir = os.path.dirname(self.output_file)
+            if output_dir and not os.path.exists(output_dir):
+                os.makedirs(output_dir, exist_ok=True)
+            
+            # 打开文件句柄
+            mode = 'a' if append_mode else 'w'
+            self.output_handle = open(self.output_file, mode, encoding='utf-8', buffering=1)  # 行缓冲
+            
+            # 写入文件头
+            if not append_mode or os.path.getsize(self.output_file) == 0:
+                from datetime import datetime
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                self.output_handle.write(f"# fridac Hook Output Log\n")
+                self.output_handle.write(f"# Started at: {timestamp}\n")
+                self.output_handle.write(f"# Mode: {'Append' if append_mode else 'Overwrite'}\n")
+                self.output_handle.write(f"{'='*60}\n\n")
+                self.output_handle.flush()
+            
+            log_success(f"✅ 输出重定向已设置: {self.output_file}")
+            
+        except Exception as e:
+            log_error(f"❌ 设置输出重定向失败: {e}")
+            self.output_file = None
+            self.output_handle = None
+    
+    def _write_to_output_file(self, content):
+        """写入内容到输出文件"""
+        if self.output_handle:
+            try:
+                from datetime import datetime
+                timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]  # 毫秒精度
+                self.output_handle.write(f"[{timestamp}] {content}\n")
+                self.output_handle.flush()
+            except Exception as e:
+                log_error(f"写入输出文件失败: {e}")
+    
+    def _clean_ansi_codes(self, text):
+        """移除 ANSI 颜色代码"""
+        import re
+        # ANSI 颜色代码正则表达式
+        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        return ansi_escape.sub('', text)
+        
     def on_message(self, message, data):
         """处理来自 Frida 脚本的消息并增强日志展示"""
         console = get_console()
@@ -237,12 +292,23 @@ class FridacSession:
             try:
                 if isinstance(payload, dict) and ('type' in payload or 'items' in payload or 'ts' in payload or 'timestamp' in payload):
                     render_structured_event(payload)
+                    # 同时写入文件（结构化数据转为字符串）
+                    if self.output_handle:
+                        self._write_to_output_file(f"STRUCTURED_EVENT: {payload}")
                 else:
+                    text = payload if isinstance(payload, str) else str(payload)
+                    
+                    # 写入输出文件
+                    if self.output_handle:
+                        # 移除 ANSI 颜色代码以便文件阅读
+                        clean_text = self._clean_ansi_codes(text)
+                        self._write_to_output_file(clean_text)
+                    
+                    # 控制台显示
                     if RICH_AVAILABLE and console:
                         try:
                             from rich.text import Text
                             style = None
-                            text = payload if isinstance(payload, str) else str(payload)
                             if text.startswith('✅') or text.startswith('🟢'):
                                 style = 'green'
                             elif text.startswith('❌') or text.startswith('🔴'):
@@ -559,6 +625,20 @@ class FridacSession:
                     self.task_manager.cleanup()
             except Exception as e:
                 log_error(f"清理任务时出错: {e}")
+
+        # 4) 关闭输出文件
+        if self.output_handle:
+            try:
+                from datetime import datetime
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                self.output_handle.write(f"\n{'='*60}\n")
+                self.output_handle.write(f"# Session ended at: {timestamp}\n")
+                self.output_handle.close()
+                log_info(f"📁 输出文件已关闭: {self.output_file}")
+            except Exception as e:
+                log_error(f"关闭输出文件失败: {e}")
+            finally:
+                self.output_handle = None
 
         log_success("已断开连接")
 

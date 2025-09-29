@@ -41,10 +41,17 @@ def create_frida_script():
     js_content += _load_advanced_tracer()
     
     # 加载自定义脚本
-    js_content += _load_custom_scripts(script_path)
+    custom_scripts_content = _load_custom_scripts(script_path)
+    js_content += custom_scripts_content
     
     # 添加交互式 Shell 初始化与 Java.perform 包装
     js_content = _wrap_with_java_perform(js_content)
+    
+    # 替换自定义函数导出占位符
+    custom_manager = get_custom_script_manager()
+    if custom_manager:
+        custom_exports = custom_manager.generate_rpc_exports()
+        js_content = js_content.replace('/* CUSTOM_EXPORTS_WILL_BE_INSERTED_HERE */', custom_exports)
     
     return js_content
 
@@ -204,6 +211,9 @@ def _load_custom_scripts(script_path):
 
 // 自定义函数导出占位符（实际注入发生在 rpc.exports 中）
 /* CUSTOM_EXPORTS_PLACEHOLDER */
+
+// 存储自定义导出以便后续替换
+var CUSTOM_EXPORTS_CODE = `{custom_exports}`;
 
 '''
         
@@ -550,6 +560,11 @@ rpc.exports = {
     intelligentHookDispatcher: intelligentHookDispatcher,
     loadNativeSupport: typeof loadNativeSupport !== 'undefined' ? loadNativeSupport : function() { 
         LOG("loadNativeSupport 功能未实现", { c: Color.Yellow }); 
+    },
+    
+    // 自定义脚本函数（如果可用）
+    traceRegisterNatives: typeof traceRegisterNatives !== 'undefined' ? traceRegisterNatives : function() { 
+        LOG("traceRegisterNatives 需要自定义脚本工具", { c: Color.Yellow }); 
     },
     
     // Native Hook 函数 (如果可用)
