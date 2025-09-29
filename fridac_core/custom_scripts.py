@@ -331,7 +331,8 @@ function monitorSensitiveNetwork(sensitiveFields) {
             functions = self._parse_functions(script_content, file_path)
             
             if not functions:
-                log_debug(f"⚠️ 脚本中未找到函数定义: {filename}")
+                # 修复未定义变量 filename，改为使用文件名
+                log_debug(f"⚠️ 脚本中未找到函数定义: {os.path.basename(file_path)}")
                 return False
             
             # 创建脚本对象
@@ -376,6 +377,11 @@ function monitorSensitiveNetwork(sensitiveFields) {
         
         for match in re.finditer(function_pattern, script_content, re.MULTILINE):
             func_name = match.group(1)
+
+            # 过滤内部工具函数：以双下划线开头的不对外展示/导出
+            if func_name.startswith('__'):
+                log_debug(f"⏭️ 跳过内部函数: {func_name}")
+                continue
             params_str = match.group(2).strip()
             
             # 解析参数
@@ -562,6 +568,8 @@ function monitorSensitiveNetwork(sensitiveFields) {
         exports.append("// ===== 自定义函数 RPC 导出 =====")
         
         for func_name, func_info in self.functions.items():
+            if func_name.startswith('__'):
+                continue
             exports.append(f"    {func_name}: typeof {func_name} !== 'undefined' ? {func_name} : function() {{ ")
             exports.append(f"        LOG('❌ 自定义函数 {func_name} 未加载或有错误', {{ c: Color.Red }}); ")
             exports.append(f"        return false; ")
@@ -579,6 +587,8 @@ function monitorSensitiveNetwork(sensitiveFields) {
         help_info = []
         
         for func_name, func_info in self.functions.items():
+            if func_name.startswith('__'):
+                continue
             help_info.append((
                 func_name,
                 func_info.description,

@@ -148,6 +148,9 @@ class FridacCompleter:
             if custom_manager:
                 custom_functions = custom_manager.get_all_functions()
                 for func_name, func_info in custom_functions.items():
+                    # 过滤内部函数（以 __ 开头）不加入补全/帮助
+                    if func_name.startswith('__'):
+                        continue
                     self.functions[func_name] = (
                         f"🔧 自定义: {func_info.description}",
                         func_info.example
