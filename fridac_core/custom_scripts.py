@@ -403,7 +403,7 @@ function monitorSensitiveNetwork(sensitiveFields) {
         
         try:
             # 解析 JavaScript 代码为 AST
-            ast = esprima.parseScript(script_content, {'attachComments': True, 'range': True})
+            ast = esprima.parseScript(script_content, {'attachComments': True, 'range': True, 'comments': True})
             
             # 遍历顶层声明，只获取函数声明
             for node in ast.body:
@@ -437,13 +437,14 @@ function monitorSensitiveNetwork(sensitiveFields) {
                                 break
                     
                     # 如果没有找到，尝试从全局 comments 中查找
-                    if not description and hasattr(ast, 'comments'):
+                    if not description and hasattr(ast, 'comments') and ast.comments:
                         func_start = node.range[0]
                         # 查找函数前面最近的 JSDoc 注释
                         closest_comment = None
                         for comment in ast.comments:
                             if (comment.type == 'Block' and 
                                 comment.value.strip().startswith('*') and 
+                                hasattr(comment, 'range') and
                                 comment.range[1] < func_start):
                                 closest_comment = comment
                         
