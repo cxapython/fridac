@@ -12,7 +12,7 @@ function dumpDex(options) {
         var dumped = 0;
         var seen = {};
 
-        function dump_one(base, size, idx) {
+        function __dump_one(base, size, idx) {
             try {
                 var file = outDir + '/dump_' + idx + '_' + Process.id + '.dex';
                 var bytes = Memory.readByteArray(base, size);
@@ -26,7 +26,7 @@ function dumpDex(options) {
             } catch (e) { LOG('⚠️ 导出 DEX 失败: ' + e.message, { c: Color.Yellow }); }
         }
 
-        function scan_for_dex() {
+        function __scan_for_dex() {
             try {
                 Process.enumerateRanges('r--').forEach(function(r){
                     try {
@@ -40,7 +40,7 @@ function dumpDex(options) {
                             try {
                                 var file_size = Memory.readU32(addr.add(0x20));
                                 if (file_size > 0 && file_size < 80 * 1024 * 1024) {
-                                    dump_one(addr, file_size, Object.keys(seen).length);
+                                    __dump_one(addr, file_size, Object.keys(seen).length);
                                 }
                             } catch(_){}
                         });
@@ -49,7 +49,7 @@ function dumpDex(options) {
             } catch(e) { LOG('⚠️ 扫描内存失败: ' + e.message, { c: Color.Yellow }); }
         }
 
-        scan_for_dex();
+        __scan_for_dex();
 
         if (enableRehook) {
             try {
@@ -58,7 +58,7 @@ function dumpDex(options) {
                     if (!addr) return;
                     Interceptor.attach(addr, {
                         onLeave: function() {
-                            try { setTimeout(scan_for_dex, 500); } catch(_){ }
+                            try { setTimeout(__scan_for_dex, 500); } catch(_){ }
                         }
                     });
                 });

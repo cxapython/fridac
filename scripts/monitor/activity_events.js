@@ -10,7 +10,7 @@ function monitorActivityEvents(options) {
     try {
         Java.perform(function(){
             var Activity = Java.use('android.app.Activity');
-            function wrap(name, sig){
+            function __wrap(name, sig){
                 try {
                     var m = sig ? Activity[name].overload(sig) : Activity[name].overload();
                     m.implementation = function(){
@@ -22,12 +22,12 @@ function monitorActivityEvents(options) {
                     };
                 } catch(_){}
             }
-            wrap('onCreate', 'android.os.Bundle');
-            wrap('onStart');
-            wrap('onResume');
-            wrap('onPause');
-            wrap('onStop');
-            wrap('onDestroy');
+            __wrap('onCreate', 'android.os.Bundle');
+            __wrap('onStart');
+            __wrap('onResume');
+            __wrap('onPause');
+            __wrap('onStop');
+            __wrap('onDestroy');
         });
         LOG('✅ Activity 生命周期监控已启用', { c: Color.Green });
         return true;

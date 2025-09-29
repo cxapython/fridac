@@ -14,6 +14,13 @@ from datetime import datetime
 
 from .logger import log_info, log_success, log_warning, log_error, log_debug
 
+# 尝试导入 esprima 用于 JavaScript AST 解析
+try:
+    import esprima
+    HAS_ESPRIMA = True
+except ImportError:
+    HAS_ESPRIMA = False
+
 @dataclass
 class CustomFunction:
     """自定义函数信息"""
@@ -360,7 +367,121 @@ function monitorSensitiveNetwork(sensitiveFields) {
     
     def _parse_functions(self, script_content: str, file_path: str) -> Dict[str, CustomFunction]:
         """
-        解析JavaScript脚本中的函数定义
+        解析JavaScript脚本中的函数定义（仅获取最外层函数）
+        
+        Args:
+            script_content: 脚本内容
+            file_path: 脚本文件路径
+            
+        Returns:
+            函数信息字典
+        """
+        functions = {}
+        
+        # 优先使用 AST 解析，回退到正则表达式
+        if HAS_ESPRIMA:
+            log_debug("✅ 使用 esprima AST 解析")
+            functions = self._parse_functions_with_ast(script_content, file_path)
+        else:
+            log_debug("⚠️ esprima 不可用，使用正则表达式解析")
+            functions = self._parse_functions_with_regex(script_content, file_path)
+            
+        return functions
+    
+    def _parse_functions_with_ast(self, script_content: str, file_path: str) -> Dict[str, CustomFunction]:
+        """
+        使用 AST 解析 JavaScript 函数（仅最外层函数）
+        
+        Args:
+            script_content: 脚本内容
+            file_path: 脚本文件路径
+            
+        Returns:
+            函数信息字典
+        """
+        functions = {}
+        
+        try:
+            # 解析 JavaScript 代码为 AST
+            ast = esprima.parseScript(script_content, {'attachComments': True, 'range': True})
+            
+            # 遍历顶层声明，只获取函数声明
+            for node in ast.body:
+                if node.type == 'FunctionDeclaration':
+                    func_name = node.id.name
+                    
+                    # 过滤内部工具函数：以双下划线开头的不对外展示/导出
+                    if func_name.startswith('__'):
+                        log_debug(f"⏭️ 跳过内部函数: {func_name}")
+                        continue
+                    
+                    # 获取参数列表
+                    parameters = [param.name for param in node.params if hasattr(param, 'name')]
+                    
+                    # 获取函数在源码中的位置
+                    start_pos, end_pos = node.range
+                    function_code = script_content[start_pos:end_pos]
+                    
+                    # 提取 JSDoc 注释（从 AST 的 leadingComments 或全局 comments）
+                    description = ""
+                    example = ""
+                    
+                    # 尝试从节点的 leadingComments 获取
+                    if hasattr(node, 'leadingComments') and node.leadingComments:
+                        for comment in node.leadingComments:
+                            if comment.type == 'Block' and comment.value.strip().startswith('*'):
+                                # JSDoc 注释
+                                comment_text = comment.value
+                                description = self._extract_description_from_comment(comment_text)
+                                example = self._extract_example_from_comment(comment_text)
+                                break
+                    
+                    # 如果没有找到，尝试从全局 comments 中查找
+                    if not description and hasattr(ast, 'comments'):
+                        func_start = node.range[0]
+                        # 查找函数前面最近的 JSDoc 注释
+                        closest_comment = None
+                        for comment in ast.comments:
+                            if (comment.type == 'Block' and 
+                                comment.value.strip().startswith('*') and 
+                                comment.range[1] < func_start):
+                                closest_comment = comment
+                        
+                        if closest_comment:
+                            comment_text = closest_comment.value
+                            description = self._extract_description_from_comment(comment_text)
+                            example = self._extract_example_from_comment(comment_text)
+                    
+                    # 默认描述和示例
+                    if not description:
+                        description = f"自定义函数: {func_name}"
+                    if not example:
+                        example_params = ', '.join([f'arg{i+1}' for i in range(len(parameters))])
+                        example = f"{func_name}({example_params})"
+                    
+                    function_info = CustomFunction(
+                        name=func_name,
+                        description=description,
+                        example=example,
+                        script_path=file_path,
+                        function_code=function_code,
+                        parameters=parameters,
+                        last_modified=time.time(),
+                        task_capable=True
+                    )
+                    
+                    functions[func_name] = function_info
+                    log_debug(f"📝 解析函数 (AST): {func_name}({', '.join(parameters)})")
+                    
+        except Exception as e:
+            log_warning(f"⚠️ AST 解析失败，回退到正则表达式: {e}")
+            return self._parse_functions_with_regex(script_content, file_path)
+            
+        return functions
+    
+    def _parse_functions_with_regex(self, script_content: str, file_path: str) -> Dict[str, CustomFunction]:
+        """
+        使用正则表达式解析 JavaScript 函数（仅最外层函数）
         
         Args:
             script_content: 脚本内容
@@ -381,6 +502,11 @@ function monitorSensitiveNetwork(sensitiveFields) {
             # 过滤内部工具函数：以双下划线开头的不对外展示/导出
             if func_name.startswith('__'):
                 log_debug(f"⏭️ 跳过内部函数: {func_name}")
+                continue
+                
+            # 检查是否为最外层函数（不在其他函数内部）
+            if not self._is_top_level_function(script_content, match.start()):
+                log_debug(f"⏭️ 跳过嵌套函数: {func_name}")
                 continue
             params_str = match.group(2).strip()
             
@@ -510,6 +636,77 @@ function monitorSensitiveNetwork(sensitiveFields) {
                     quote_char = None
         
         return script_content[start_pos:]  # 如果没找到匹配的括号，返回到文件末尾
+    
+    def _extract_description_from_comment(self, comment_text: str) -> str:
+        """从JSDoc注释文本中提取描述"""
+        # 查找@description标签
+        desc_pattern = r'@description\s+([^\n@]+)'
+        desc_match = re.search(desc_pattern, comment_text)
+        if desc_match:
+            return desc_match.group(1).strip()
+        
+        # 如果没有@description，提取第一行非空注释作为描述
+        lines = comment_text.split('\n')
+        for line in lines:
+            line = line.strip(' */')
+            if line and not line.startswith('@'):
+                return line.strip()
+        
+        return ""
+    
+    def _extract_example_from_comment(self, comment_text: str) -> str:
+        """从JSDoc注释文本中提取示例"""
+        # 查找@example标签
+        example_pattern = r'@example\s+([^\n@]+)'
+        example_match = re.search(example_pattern, comment_text)
+        if example_match:
+            return example_match.group(1).strip()
+        
+        return ""
+    
+    def _is_top_level_function(self, script_content: str, func_start: int) -> bool:
+        """
+        检查函数是否为顶层函数（不在其他函数内部）
+        
+        Args:
+            script_content: 脚本内容
+            func_start: 函数开始位置
+            
+        Returns:
+            是否为顶层函数
+        """
+        # 简单的大括号计数方法
+        brace_count = 0
+        in_string = False
+        escape_next = False
+        quote_char = None
+        
+        for i in range(func_start):
+            char = script_content[i]
+            
+            if escape_next:
+                escape_next = False
+                continue
+            
+            if char == '\\':
+                escape_next = True
+                continue
+            
+            if not in_string:
+                if char in ['"', "'"]:
+                    in_string = True
+                    quote_char = char
+                elif char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+            else:
+                if char == quote_char:
+                    in_string = False
+                    quote_char = None
+        
+        # 如果大括号计数为0，说明是顶层函数
+        return brace_count == 0
     
     def get_all_functions(self) -> Dict[str, CustomFunction]:
         """获取所有自定义函数"""

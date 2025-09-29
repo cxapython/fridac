@@ -5,7 +5,7 @@
  */
 function traceRegisterNatives() {
     try {
-        function hookOne(moduleName, symbol) {
+        function __hookOne(moduleName, symbol) {
             var addr = Module.findExportByName(moduleName, symbol);
             if (!addr) return false;
             Interceptor.attach(addr, {
@@ -42,10 +42,10 @@ function traceRegisterNatives() {
 
         var hooked = false;
         // 通用导出名（部分 Android 版本）
-        hooked = hookOne(null, 'RegisterNatives') || hooked;
-        hooked = hookOne('libart.so', 'RegisterNatives') || hooked;
+        hooked = __hookOne(null, 'RegisterNatives') || hooked;
+        hooked = __hookOne('libart.so', 'RegisterNatives') || hooked;
         // 旧路径
-        hooked = hookOne('libandroid_runtime.so', 'jniRegisterNativeMethods') || hooked;
+        hooked = __hookOne('libandroid_runtime.so', 'jniRegisterNativeMethods') || hooked;
 
         if (!hooked) LOG('⚠️ 未找到 RegisterNatives 符号，可能需使用 nativeHookJNIFunctions()', { c: Color.Yellow });
         return hooked;
