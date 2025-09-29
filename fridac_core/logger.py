@@ -15,10 +15,16 @@ try:
     from rich.text import Text
     from rich.align import Align
     from rich.box import DOUBLE
+    from rich.markup import escape as _rich_escape
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
     Console = None
+    def _rich_escape(x):
+        try:
+            return str(x)
+        except Exception:
+            return x
 
 # 初始化 Rich 控制台
 console = Console() if RICH_AVAILABLE else None
@@ -27,7 +33,7 @@ def log_info(message, **kwargs):
     """信息日志（支持 rich 格式化）"""
     if RICH_AVAILABLE:
         timestamp = datetime.now().strftime("%H:%M:%S")
-        console.print(f"[dim]{timestamp}[/dim] [cyan]ℹ️[/cyan] {message}", **kwargs)
+        console.print(f"[dim]{timestamp}[/dim] [cyan]ℹ️[/cyan] {_rich_escape(message)}", **kwargs)
     else:
         print(f"ℹ️  {message}")
 
@@ -35,7 +41,7 @@ def log_success(message, **kwargs):
     """成功日志（支持 rich 格式化）"""
     if RICH_AVAILABLE:
         timestamp = datetime.now().strftime("%H:%M:%S")
-        console.print(f"[dim]{timestamp}[/dim] [green]✅[/green] {message}", **kwargs)
+        console.print(f"[dim]{timestamp}[/dim] [green]✅[/green] {_rich_escape(message)}", **kwargs)
     else:
         print(f"✅ {message}")
 
@@ -43,7 +49,7 @@ def log_warning(message, **kwargs):
     """警告日志（支持 rich 格式化）"""
     if RICH_AVAILABLE:
         timestamp = datetime.now().strftime("%H:%M:%S")
-        console.print(f"[dim]{timestamp}[/dim] [yellow]⚠️[/yellow] {message}", **kwargs)
+        console.print(f"[dim]{timestamp}[/dim] [yellow]⚠️[/yellow] {_rich_escape(message)}", **kwargs)
     else:
         print(f"⚠️  {message}")
 
@@ -51,7 +57,7 @@ def log_error(message, **kwargs):
     """错误日志（支持 rich 格式化）"""
     if RICH_AVAILABLE:
         timestamp = datetime.now().strftime("%H:%M:%S")
-        console.print(f"[dim]{timestamp}[/dim] [red]❌[/red] {message}", **kwargs)
+        console.print(f"[dim]{timestamp}[/dim] [red]❌[/red] {_rich_escape(message)}", **kwargs)
     else:
         print(f"❌ {message}")
 
@@ -59,7 +65,7 @@ def log_debug(message, **kwargs):
     """调试日志（支持 rich 格式化）"""
     if RICH_AVAILABLE:
         timestamp = datetime.now().strftime("%H:%M:%S")
-        console.print(f"[dim]{timestamp}[/dim] [magenta]🔍[/magenta] {message}", **kwargs)
+        console.print(f"[dim]{timestamp}[/dim] [magenta]🔍[/magenta] {_rich_escape(message)}", **kwargs)
     else:
         print(f"🔍 {message}")
 

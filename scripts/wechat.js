@@ -5,6 +5,7 @@
  */
 function hook_com_tencent_mm_storage_k8_Ta() {
     Java.perform(function() {
+        LOG('🔍 开始1234Hook com.tencent.mm.storage.k8.Ta', { c: Color.Blue });
         try {
             var fullyQualifiedMethodName = 'com.tencent.mm.storage.k8.Ta';
             var lastDotIndex = fullyQualifiedMethodName.lastIndexOf('.');
@@ -78,6 +79,16 @@ function hook_com_tencent_mm_storage_k8_Ta() {
                                 if (arguments.length > 0) {
                                     LOG('📥 参数:', { c: Color.Blue });
                                     for (var j = 0; j < arguments.length; j++) {
+                                        for (var j = 0; j < arguments.length; j++) {
+                                            var __t = __getArgType(arguments[j]);
+                                            if(j==0){
+                                                LOG('参数0', { c: Color.Blue });
+                                                const ContentValues=arguments[j].convertTo()
+                                                LOG('消息内容', { c: Color.Blue });
+                                                LOG(ContentValues.toString(), { c: Color.White });
+                                            }
+                                            LOG('  arg[' + j + '] (' + __t + '): ' + arguments[j], { c: Color.White });
+                                        }
                                         var __t = __getArgType(arguments[j]);
                                         LOG('  arg[' + j + '] (' + __t + '): ' + arguments[j], { c: Color.White });
                                     }

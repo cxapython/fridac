@@ -32,6 +32,313 @@ function LOG(message, options) {
     }
 }
 
+// ===== 对象注册表与通用格式化 =====
+var __obj_registry = { byId: {}, order: [], max: 500 };
+
+function __registerObject(obj) {
+    try {
+        var System = Java.use('java.lang.System');
+        var idInt = 0;
+        try { idInt = System.identityHashCode(obj); } catch (_) { idInt = Math.floor(Math.random() * 1e9); }
+        var key = String(idInt);
+        var className = '';
+        try { className = String(obj.getClass().getName()); } catch (_) { try { className = obj.$className || ''; } catch(__) {} }
+        __obj_registry.byId[key] = { obj: obj, className: className, time: Date.now() };
+        __obj_registry.order.push(key);
+        if (__obj_registry.order.length > __obj_registry.max) {
+            var removed = __obj_registry.order.shift();
+            try { delete __obj_registry.byId[removed]; } catch (_) {}
+        }
+        return key;
+    } catch (e) {
+        try { LOG('⚠️ 注册对象失败: ' + e.message, { c: Color.Yellow }); } catch (_) {}
+        return null;
+    }
+}
+
+function __formatTypeName(javaType, fullname) {
+    try {
+        if (!javaType) return 'unknown';
+        if (typeof javaType.getName === 'function' && fullname) return String(javaType.getName());
+        if (typeof javaType.getSimpleName === 'function' && !fullname) return String(javaType.getSimpleName());
+        if (javaType.class && typeof javaType.class.getName === 'function' && fullname) return String(javaType.class.getName());
+        if (javaType.class && typeof javaType.class.getSimpleName === 'function' && !fullname) return String(javaType.class.getSimpleName());
+        return String(javaType + '');
+    } catch (_) { return 'unknown'; }
+}
+
+function __safeToString(val) {
+    try {
+        if (val === null) return 'null';
+        if (typeof val === 'undefined') return 'undefined';
+        return String(val);
+    } catch (_) {
+        try { return Object.prototype.toString.call(val); } catch (__){ return '<unprintable>'; }
+    }
+}
+
+// ===== 类/对象搜索与转储（wallbreaker 风格） =====
+function classsearch(pattern) {
+    try {
+        var isRegex = false;
+        var regex = null;
+        if (pattern && typeof pattern === 'string' && pattern.length >= 2 && pattern[0] === '/' && pattern[pattern.length - 1] === '/') {
+            try { regex = new RegExp(pattern.slice(1, -1)); isRegex = true; } catch (_) { regex = null; isRegex = false; }
+        }
+        var results = [];
+        Java.perform(function() {
+            var classes = [];
+            try { classes = Java.enumerateLoadedClassesSync(); } catch (_) { classes = []; }
+            for (var i = 0; i < classes.length; i++) {
+                var cn = classes[i];
+                if (isRegex ? regex.test(cn) : (String(cn).toLowerCase().indexOf(String(pattern || '').toLowerCase()) !== -1)) {
+                    results.push(cn);
+                }
+            }
+        });
+        for (var j = 0; j < results.length; j++) { LOG('📦 ' + results[j], { c: Color.Green }); }
+        LOG('✅ 共找到 ' + results.length + ' 个匹配类', { c: Color.Blue });
+        return results;
+    } catch (e) {
+        LOG('❌ classsearch 失败: ' + e.message, { c: Color.Red });
+        return [];
+    }
+}
+
+function objectsearch(className, limit) {
+    try {
+        var max = (typeof limit === 'number' && limit > 0) ? limit : 50;
+        var found = 0;
+        var items = [];
+        LOG('🔍 搜索对象实例: ' + className + ' (limit=' + max + ')', { c: Color.Cyan });
+        Java.perform(function() {
+            try {
+                // 先在默认 ClassLoader 下验证类是否可用（避免 choose 直接抛异常）
+                var prepared = false;
+                try {
+                    var _tmp = Java.use(className);
+                    if (_tmp && _tmp.class) {
+                        LOG('----- default ClassLoader -----', { c: Color.Cyan });
+                        prepared = true;
+                    }
+                } catch (_) { prepared = false; }
+
+                var usingLoader = null;
+                var oldLoader = null;
+                if (!prepared) {
+                    LOG('----- default ClassLoader: not found, searching other dex -----', { c: Color.Yellow });
+                    try {
+                        var loader = (typeof findTragetClassLoader === 'function') ? findTragetClassLoader(className) : null;
+                        if (loader) {
+                            try {
+                                var factory = Java.ClassFactory.get(loader);
+                                factory.use(className); // 尝试在该 loader 下加载类
+                                oldLoader = (function(){ try { return Java.classFactory.loader; } catch(_) { return null; } })();
+                                try { Java.classFactory.loader = loader; } catch(_) {}
+                                usingLoader = loader;
+                                LOG('----- custom ClassLoader -----', { c: Color.Cyan });
+                                prepared = true;
+                            } catch (eLoad) {
+                                LOG('❌ 在自定义ClassLoader中加载失败: ' + eLoad.message, { c: Color.Red });
+                            }
+                        } else {
+                            LOG('❌ 未在其他ClassLoader中找到类: ' + className, { c: Color.Red });
+                        }
+                    } catch (eFind) {
+                        LOG('❌ 搜索其他ClassLoader失败: ' + eFind.message, { c: Color.Red });
+                    }
+                }
+
+                if (!prepared) {
+                    // 两种 ClassLoader 都无法加载该类，直接返回避免 choose 抛错
+                    return;
+                }
+
+                try {
+                    Java.choose(className, {
+                        onMatch: function(instance) {
+                            try {
+                                if (found >= max) return;
+                                var id = __registerObject(instance);
+                                var cls = '';
+                                try { cls = String(instance.getClass().getName()); } catch (_) { try { cls = instance.$className || ''; } catch(__){} }
+                                var preview = '';
+                                try { preview = __safeToString(instance.toString()); } catch (_) { preview = '<toString() failed>'; }
+                                LOG('🧩 #' + id + '  ' + cls + '  -> ' + preview, { c: Color.White });
+                                items.push({ id: id, className: cls, preview: preview });
+                                found++;
+                            } catch (_) {}
+                        },
+                        onComplete: function() {}
+                    });
+                } finally {
+                    if (usingLoader) {
+                        try { Java.classFactory.loader = oldLoader; } catch(_) {}
+                    }
+                }
+            } catch (e2) {
+                LOG('❌ objectsearch 失败: ' + e2.message, { c: Color.Red });
+            }
+        });
+        LOG('✅ 共记录 ' + items.length + ' 个对象句柄 (使用 objectdump(<id>) 查看详情)', { c: Color.Blue });
+        return items;
+    } catch (e) {
+        LOG('❌ objectsearch 失败: ' + e.message, { c: Color.Red });
+        return [];
+    }
+}
+
+function classdump(className, fullname) {
+    fullname = !!fullname;
+    try {
+        Java.perform(function() {
+            try {
+                var Cls = null;
+                var clazz = null;
+                var usedCustomLoader = false;
+                try {
+                    Cls = Java.use(className);
+                    clazz = Cls.class;
+                    LOG('----- default ClassLoader -----', { c: Color.Cyan });
+                } catch (error) {
+                    if ((error.message || '').indexOf('ClassNotFoundException') !== -1) {
+                        LOG('----- default ClassLoader: not found, searching other dex -----', { c: Color.Yellow });
+                        try {
+                            var loader = (typeof findTragetClassLoader === 'function') ? findTragetClassLoader(className) : null;
+                            if (loader) {
+                                Cls = Java.ClassFactory.get(loader).use(className);
+                                clazz = Cls.class;
+                                usedCustomLoader = true;
+                                LOG('----- custom ClassLoader -----', { c: Color.Cyan });
+                            } else {
+                                LOG('❌ 未在其他ClassLoader中找到类: ' + className, { c: Color.Red });
+                                return;
+                            }
+                        } catch (e2) {
+                            LOG('❌ 搜索其他ClassLoader失败: ' + e2.message, { c: Color.Red });
+                            return;
+                        }
+                    } else {
+                        throw error;
+                    }
+                }
+                LOG('📘 Class: ' + className, { c: Color.Cyan });
+                // 继承与接口
+                try {
+                    var superClz = clazz.getSuperclass();
+                    if (superClz) LOG('  ├─ extends: ' + __formatTypeName(superClz, true), { c: Color.Gray });
+                } catch(_){}
+                try {
+                    var ifaces = clazz.getInterfaces();
+                    if (ifaces && ifaces.length) {
+                        for (var i = 0; i < ifaces.length; i++) {
+                            LOG('  ├─ implements: ' + __formatTypeName(ifaces[i], true), { c: Color.Gray });
+                        }
+                    }
+                } catch(_){}
+
+                // 字段
+                LOG('  📄 Fields:', { c: Color.Blue });
+                try {
+                    var fields = clazz.getDeclaredFields();
+                    for (var f = 0; f < fields.length; f++) {
+                        var field = fields[f];
+                        try {
+                            var type = __formatTypeName(field.getType(), fullname);
+                            var name = String(field.getName());
+                            var mods = '';
+                            try { mods = String(field.toString()).split(' ')[0]; } catch(_){}
+                            LOG('    - ' + (mods ? (mods + ' ') : '') + type + ' ' + name, { c: Color.White });
+                        } catch(_){}
+                    }
+                } catch(_) { LOG('    <unavailable>', { c: Color.Yellow }); }
+
+                // 构造函数
+                LOG('  🏗️ Constructors:', { c: Color.Blue });
+                try {
+                    var ctors = clazz.getDeclaredConstructors();
+                    for (var c = 0; c < ctors.length; c++) {
+                        var ctor = ctors[c];
+                        try {
+                            var ptypes = ctor.getParameterTypes();
+                            var parts = [];
+                            for (var pi = 0; pi < ptypes.length; pi++) { parts.push(__formatTypeName(ptypes[pi], fullname)); }
+                            LOG('    - ' + className + '(' + parts.join(', ') + ')', { c: Color.White });
+                        } catch(_){}
+                    }
+                } catch(_) { LOG('    <unavailable>', { c: Color.Yellow }); }
+
+                // 方法
+                LOG('  🧠 Methods:', { c: Color.Blue });
+                try {
+                    var methods = clazz.getDeclaredMethods();
+                    for (var m = 0; m < methods.length; m++) {
+                        var method = methods[m];
+                        try {
+                            var ret = __formatTypeName(method.getReturnType(), fullname);
+                            var mn = String(method.getName());
+                            var params = method.getParameterTypes();
+                            var pnames = [];
+                            for (var k = 0; k < params.length; k++) { pnames.push(__formatTypeName(params[k], fullname)); }
+                            var mods2 = '';
+                            try { mods2 = String(method.toString()).split(' ')[0]; } catch(_){}
+                            LOG('    - ' + (mods2 ? (mods2 + ' ') : '') + ret + ' ' + mn + '(' + pnames.join(', ') + ')', { c: Color.White });
+                        } catch(_){}
+                    }
+                } catch(_) { LOG('    <unavailable>', { c: Color.Yellow }); }
+
+                LOG('✅ classdump 完成', { c: Color.Green });
+            } catch (e2) {
+                LOG('❌ classdump 失败: ' + e2.message, { c: Color.Red });
+            }
+        });
+        return true;
+    } catch (e) {
+        LOG('❌ classdump 失败: ' + e.message, { c: Color.Red });
+        return false;
+    }
+}
+
+function objectdump(handle, fullname) {
+    fullname = !!fullname;
+    try {
+        var id = String(handle);
+        var entry = __obj_registry.byId[id];
+        if (!entry || !entry.obj) { LOG('❌ 未找到对象句柄 #' + id + '，请先执行 objectsearch()', { c: Color.Red }); return false; }
+        Java.perform(function() {
+            try {
+                var obj = entry.obj;
+                var clazz = obj.getClass ? obj.getClass() : (obj.class ? obj.class : null);
+                var className = '';
+                try { className = clazz ? String(clazz.getName ? clazz.getName() : clazz.getName()) : (obj.$className || 'Object'); } catch(_) { className = obj.$className || 'Object'; }
+                LOG('📦 Object #' + id + ' <' + className + '>', { c: Color.Cyan });
+                try {
+                    var fields = clazz.getDeclaredFields();
+                    for (var i = 0; i < fields.length; i++) {
+                        try {
+                            var f = fields[i];
+                            try { f.setAccessible && f.setAccessible(true); } catch(_){}
+                            var name = String(f.getName());
+                            var type = __formatTypeName(f.getType(), fullname);
+                            var val = null;
+                            try { val = f.get(obj); } catch (ee) { val = '<inaccessible>'; }
+                            var valStr = __safeToString(val);
+                            LOG('  - ' + type + ' ' + name + ' = ' + valStr, { c: Color.White });
+                        } catch(_){}
+                    }
+                } catch (_) { LOG('  <无法获取字段>', { c: Color.Yellow }); }
+                LOG('✅ objectdump 完成', { c: Color.Green });
+            } catch (e2) {
+                LOG('❌ objectdump 失败: ' + e2.message, { c: Color.Red });
+            }
+        });
+        return true;
+    } catch (e) {
+        LOG('❌ objectdump 失败: ' + e.message, { c: Color.Red });
+        return false;
+    }
+}
+
 function printStack(showComplete, maxLines) {
     try {
         var exception = Java.use("java.lang.Exception").$new();
@@ -1656,6 +1963,11 @@ global.printStack = printStack;
 global.printJavaCallStack = printJavaCallStack;
 global.findTragetClassLoader = findTragetClassLoader;
 global.fetch = fetch;
+// Wallbreaker-like helpers
+global.classsearch = classsearch;
+global.objectsearch = objectsearch;
+global.classdump = classdump;
+global.objectdump = objectdump;
 // OkHttp Logger 导出（插件提供时可用）
 if (typeof okhttpFind !== 'undefined') global.okhttpFind = okhttpFind;
 if (typeof okhttpSwitchLoader !== 'undefined') global.okhttpSwitchLoader = okhttpSwitchLoader;
