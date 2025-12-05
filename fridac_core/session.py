@@ -43,6 +43,8 @@ except ImportError:
 
 # 命令历史记录文件（默认路径；实际读取时有回退逻辑）
 HISTORY_FILE = os.path.expanduser("~/.fridac_history")
+# prompt_toolkit 使用单独的历史文件（格式与 readline 不兼容）
+PT_HISTORY_FILE = os.path.expanduser("~/.fridac_pt_history")
 
 def setup_history():
     """设置命令历史与自动补全"""
@@ -731,9 +733,10 @@ def run_interactive_session(session):
     
     if stdin_is_tty and get_prompt_toolkit_available():
         try:
-            pt_session = create_prompt_session(completer, HISTORY_FILE)
+            # 使用单独的历史文件（prompt_toolkit 格式与 readline 不兼容）
+            pt_session = create_prompt_session(completer, PT_HISTORY_FILE)
             use_prompt_toolkit = True
-            log_info("✨ 已启用 objection 风格内联提示（输入时显示灰色建议，Tab 补全）")
+            log_info("✨ 已启用 objection 风格内联提示（↑↓翻历史，Tab补全，Ctrl+R搜索）")
         except Exception as e:
             log_debug(f"prompt_toolkit 初始化失败，回退到 readline: {e}")
             use_prompt_toolkit = False

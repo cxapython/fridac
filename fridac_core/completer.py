@@ -332,17 +332,29 @@ if PROMPT_TOOLKIT_AVAILABLE:
             配置好的 PromptSession 或 None（如果 prompt_toolkit 不可用）
         """
         from prompt_toolkit import PromptSession
+        from prompt_toolkit.key_binding import KeyBindings
+        import os
         
         # 历史记录
+        history = None
         if history_file:
             try:
+                # 确保历史文件目录存在
+                history_dir = os.path.dirname(history_file)
+                if history_dir and not os.path.exists(history_dir):
+                    os.makedirs(history_dir, exist_ok=True)
+                # 确保文件存在（FileHistory 需要）
+                if not os.path.exists(history_file):
+                    open(history_file, 'a').close()
                 history = FileHistory(history_file)
-            except Exception:
+            except Exception as e:
+                print(f"⚠️ 历史文件初始化失败: {e}，使用内存历史")
                 history = InMemoryHistory()
-        else:
+        
+        if history is None:
             history = InMemoryHistory()
         
-        # 创建会话
+        # 创建会话（上下键历史是默认行为，不需要额外配置）
         session = PromptSession(
             history=history,
             auto_suggest=FridacAutoSuggest(completer),
