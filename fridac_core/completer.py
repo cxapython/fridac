@@ -41,7 +41,7 @@ class FridacCompleter:
             'enumAllClasses': ('📋 枚举包下所有类', "enumAllClasses('com.example')"),
             'describeJavaClass': ('📖 描述Java类详细信息', "describeJavaClass('java.lang.String')"),
             
-            # ===== Wallbreaker风格搜索 =====
+            # ===== 类/对象搜索 =====
             'classsearch': ('🔍 搜索类（支持正则/pattern/）', "classsearch('MainActivity')"),
             'objectsearch': ('🧩 搜索对象实例', "objectsearch('com.example.MainActivity', 20)"),
             'classdump': ('📘 输出类结构', "classdump('com.example.MainActivity', true)"),

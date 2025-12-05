@@ -77,7 +77,7 @@ function __safeToString(val) {
     }
 }
 
-// ===== 类/对象搜索与转储（wallbreaker 风格） =====
+// ===== 类/对象搜索与转储 =====
 function classsearch(pattern) {
     try {
         var isRegex = false;
@@ -1828,7 +1828,7 @@ global.printStack = printStack;
 global.printJavaCallStack = printJavaCallStack;
 global.findTragetClassLoader = findTragetClassLoader;
 global.fetch = fetch;
-// Wallbreaker-like helpers
+// 类和对象搜索
 global.classsearch = classsearch;
 global.objectsearch = objectsearch;
 global.classdump = classdump;
