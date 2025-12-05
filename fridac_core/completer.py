@@ -51,7 +51,15 @@ class FridacCompleter:
             'classsearch': ('🔍 搜索类（支持正则/pattern/）', "classsearch('MainActivity')"),
             'objectsearch': ('🧩 搜索对象实例', "objectsearch('com.example.MainActivity', 20)"),
             'classdump': ('📘 输出类结构', "classdump('com.example.MainActivity', true)"),
-            'objectdump': ('📦 输出对象字段值', "objectdump('123456789', true)"),
+            'objectdump': ('📦 输出对象字段值（仅当前类）', "objectdump('123456789', true)"),
+            
+            # ===== Wallbreaker 风格对象查看器 =====
+            'objectview': ('🔬 深度查看对象（含继承/静态字段）', "objectview(123456789, {showInherited: true})"),
+            'objectfields': ('📋 获取对象完整字段列表', "objectfields(123456789)"),
+            'objectrefresh': ('🔄 刷新对象查看最新值', "objectrefresh(123456789)"),
+            'objectexpand': ('🔗 展开对象字段（注册为新对象）', "objectexpand(123456789, 'fieldName')"),
+            'objectlist': ('📋 展开 List/Set 集合内容', "objectlist(123456789, 20)"),
+            'objectmap': ('🗺️ 展开 Map 集合内容', "objectmap(123456789, 20)"),
             
             # ===== 工具函数 =====
             'printStack': ('📚 打印Java调用栈', "printStack()"),

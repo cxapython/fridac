@@ -15,6 +15,7 @@ var Color = {
     Green: "\x1b[32m", 
     Yellow: "\x1b[33m",
     Blue: "\x1b[34m",
+    Magenta: "\x1b[35m",
     Cyan: "\x1b[36m",
     White: "\x1b[37m",
     Gray: "\x1b[90m",
@@ -23,8 +24,12 @@ var Color = {
 
 function LOG(message, options) {
     try {
-        // 统一通过 send() 向 Python 端输出，避免 ANSI 颜色转义产生的“m/undefined”噪音
+        options = options || {};
         var text = (message === null || typeof message === 'undefined') ? '' : String(message);
+        // 如果有颜色参数，添加 ANSI 颜色码
+        if (options.c) {
+            text = options.c + text + Color.Reset;
+        }
         send(text);
     } catch (e) {
         // 兜底：即使 send 出错也不抛异常，避免打断执行
@@ -74,6 +79,57 @@ function __safeToString(val) {
         return String(val);
     } catch (_) {
         try { return Object.prototype.toString.call(val); } catch (__){ return '<unprintable>'; }
+    }
+}
+
+/**
+ * 格式化字段值，如果是对象则自动注册并返回可点击的句柄
+ * @param {*} val - 字段值
+ * @param {boolean} registerObjects - 是否注册对象引用
+ * @returns {object} { display: string, objectId: string|null }
+ */
+function __formatFieldValue(val, registerObjects) {
+    try {
+        if (val === null) return { display: 'null', objectId: null };
+        if (typeof val === 'undefined') return { display: 'undefined', objectId: null };
+        if (val === '<inaccessible>') return { display: '<inaccessible>', objectId: null };
+        
+        // 检测是否是 Java 对象（有 getClass 方法）
+        if (registerObjects && val && typeof val === 'object' && typeof val.getClass === 'function') {
+            try {
+                var valClass = val.getClass();
+                var valClassName = String(valClass.getName());
+                
+                // 排除基本类型的包装类和常见不可变类型
+                var primitiveWrappers = [
+                    'java.lang.String', 'java.lang.Integer', 'java.lang.Long',
+                    'java.lang.Boolean', 'java.lang.Double', 'java.lang.Float',
+                    'java.lang.Short', 'java.lang.Byte', 'java.lang.Character',
+                    'java.lang.Number', 'java.math.BigInteger', 'java.math.BigDecimal'
+                ];
+                
+                // 对于基本类型包装类，直接显示值
+                if (primitiveWrappers.indexOf(valClassName) !== -1) {
+                    return { display: __safeToString(val), objectId: null };
+                }
+                
+                // 对于其他对象，注册并显示句柄
+                var objId = __registerObject(val);
+                if (objId) {
+                    var simpleClassName = valClassName;
+                    var lastDot = valClassName.lastIndexOf('.');
+                    if (lastDot > 0) simpleClassName = valClassName.substring(lastDot + 1);
+                    return { 
+                        display: '<' + simpleClassName + '@' + objId + '>', 
+                        objectId: objId 
+                    };
+                }
+            } catch (_) {}
+        }
+        
+        return { display: __safeToString(val), objectId: null };
+    } catch (_) {
+        return { display: '<unprintable>', objectId: null };
     }
 }
 
@@ -300,7 +356,8 @@ function classdump(className, fullname) {
 }
 
 function objectdump(handle, fullname) {
-    fullname = !!fullname;
+    // 默认显示完整类名（与 wallbreaker 行为一致）
+    fullname = (fullname === false) ? false : true;
     try {
         var id = String(handle);
         var entry = __obj_registry.byId[id];
@@ -310,24 +367,160 @@ function objectdump(handle, fullname) {
                 var obj = entry.obj;
                 var clazz = obj.getClass ? obj.getClass() : (obj.class ? obj.class : null);
                 var className = '';
-                try { className = clazz ? String(clazz.getName ? clazz.getName() : clazz.getName()) : (obj.$className || 'Object'); } catch(_) { className = obj.$className || 'Object'; }
-                LOG('📦 Object #' + id + ' <' + className + '>', { c: Color.Cyan });
+                try { className = clazz ? String(clazz.getName()) : (obj.$className || 'Object'); } catch(_) { className = obj.$className || 'Object'; }
+                
+                var Modifier = Java.use('java.lang.reflect.Modifier');
+                
+                // 包名
+                var pkgName = '';
+                try {
+                    var lastDot = className.lastIndexOf('.');
+                    if (lastDot > 0) pkgName = className.substring(0, lastDot);
+                } catch(_) {}
+                LOG('package ' + pkgName, { c: Color.Gray });
+                LOG('', { c: Color.White });
+                
+                // 类名（简短形式）
+                var simpleClassName = className;
+                try {
+                    var lastDot2 = className.lastIndexOf('.');
+                    if (lastDot2 > 0) simpleClassName = className.substring(lastDot2 + 1);
+                } catch(_) {}
+                LOG('class ' + simpleClassName + ' {', { c: Color.Cyan });
+                
+                // ===== 静态字段 =====
+                var referencedObjects = [];
+                LOG('', { c: Color.White });
+                LOG('    /* static fields */', { c: Color.Gray });
                 try {
                     var fields = clazz.getDeclaredFields();
+                    var hasStaticField = false;
                     for (var i = 0; i < fields.length; i++) {
                         try {
                             var f = fields[i];
-                            try { f.setAccessible && f.setAccessible(true); } catch(_){}
+                            var mods = f.getModifiers();
+                            if (!Modifier.isStatic(mods)) continue;
+                            hasStaticField = true;
+                            try { f.setAccessible(true); } catch(_){}
                             var name = String(f.getName());
                             var type = __formatTypeName(f.getType(), fullname);
                             var val = null;
-                            try { val = f.get(obj); } catch (ee) { val = '<inaccessible>'; }
-                            var valStr = __safeToString(val);
-                            LOG('  - ' + type + ' ' + name + ' = ' + valStr, { c: Color.White });
+                            try { val = f.get(null); } catch (_) { val = '<inaccessible>'; }
+                            var formatted = __formatFieldValue(val, true);
+                            if (formatted.objectId) {
+                                referencedObjects.push({ name: name, id: formatted.objectId });
+                            }
+                            LOG('    static ' + type + ' ' + name + '; => ' + formatted.display, { c: Color.Yellow });
                         } catch(_){}
                     }
-                } catch (_) { LOG('  <无法获取字段>', { c: Color.Yellow }); }
-                LOG('✅ objectdump 完成', { c: Color.Green });
+                    if (!hasStaticField) LOG('    (无静态字段)', { c: Color.Gray });
+                } catch (_) { LOG('    <无法获取静态字段>', { c: Color.Yellow }); }
+                
+                // ===== 实例字段 =====
+                LOG('', { c: Color.White });
+                LOG('    /* instance fields */', { c: Color.Gray });
+                try {
+                    var fields = clazz.getDeclaredFields();
+                    var hasInstanceField = false;
+                    for (var i = 0; i < fields.length; i++) {
+                        try {
+                            var f = fields[i];
+                            var mods = f.getModifiers();
+                            if (Modifier.isStatic(mods)) continue;
+                            hasInstanceField = true;
+                            try { f.setAccessible(true); } catch(_){}
+                            var name = String(f.getName());
+                            var type = __formatTypeName(f.getType(), fullname);
+                            var val = null;
+                            try { val = f.get(obj); } catch (_) { val = '<inaccessible>'; }
+                            var formatted = __formatFieldValue(val, true);
+                            if (formatted.objectId) {
+                                referencedObjects.push({ name: name, id: formatted.objectId });
+                            }
+                            LOG('    ' + type + ' ' + name + '; => ' + formatted.display, { c: Color.White });
+                        } catch(_){}
+                    }
+                    if (!hasInstanceField) LOG('    (无实例字段)', { c: Color.Gray });
+                } catch (_) { LOG('    <无法获取实例字段>', { c: Color.Yellow }); }
+                
+                // ===== 构造方法 =====
+                LOG('', { c: Color.White });
+                LOG('    /* constructor methods */', { c: Color.Gray });
+                try {
+                    var ctors = clazz.getDeclaredConstructors();
+                    if (ctors.length === 0) {
+                        LOG('    (无构造方法)', { c: Color.Gray });
+                    }
+                    for (var c = 0; c < ctors.length; c++) {
+                        var ctor = ctors[c];
+                        try {
+                            var ptypes = ctor.getParameterTypes();
+                            var parts = [];
+                            for (var pi = 0; pi < ptypes.length; pi++) { parts.push(__formatTypeName(ptypes[pi], fullname)); }
+                            LOG('    ' + simpleClassName + '(' + parts.join(', ') + ');', { c: Color.White });
+                        } catch(_){}
+                    }
+                } catch(_) { LOG('    <无法获取构造方法>', { c: Color.Yellow }); }
+                
+                // ===== 静态方法 =====
+                LOG('', { c: Color.White });
+                LOG('    /* static methods */', { c: Color.Gray });
+                try {
+                    var methods = clazz.getDeclaredMethods();
+                    var hasStaticMethod = false;
+                    for (var m = 0; m < methods.length; m++) {
+                        var method = methods[m];
+                        try {
+                            var mods = method.getModifiers();
+                            if (!Modifier.isStatic(mods)) continue;
+                            hasStaticMethod = true;
+                            var ret = __formatTypeName(method.getReturnType(), fullname);
+                            var mn = String(method.getName());
+                            var params = method.getParameterTypes();
+                            var pnames = [];
+                            for (var k = 0; k < params.length; k++) { pnames.push(__formatTypeName(params[k], fullname)); }
+                            LOG('    static ' + ret + ' ' + mn + '(' + pnames.join(', ') + ');', { c: Color.Magenta });
+                        } catch(_){}
+                    }
+                    if (!hasStaticMethod) LOG('    (无静态方法)', { c: Color.Gray });
+                } catch(_) { LOG('    <无法获取静态方法>', { c: Color.Yellow }); }
+                
+                // ===== 实例方法 =====
+                LOG('', { c: Color.White });
+                LOG('    /* instance methods */', { c: Color.Gray });
+                try {
+                    var methods = clazz.getDeclaredMethods();
+                    var hasInstanceMethod = false;
+                    for (var m = 0; m < methods.length; m++) {
+                        var method = methods[m];
+                        try {
+                            var mods = method.getModifiers();
+                            if (Modifier.isStatic(mods)) continue;
+                            hasInstanceMethod = true;
+                            var ret = __formatTypeName(method.getReturnType(), fullname);
+                            var mn = String(method.getName());
+                            var params = method.getParameterTypes();
+                            var pnames = [];
+                            for (var k = 0; k < params.length; k++) { pnames.push(__formatTypeName(params[k], fullname)); }
+                            LOG('    ' + ret + ' ' + mn + '(' + pnames.join(', ') + ');', { c: Color.Green });
+                        } catch(_){}
+                    }
+                    if (!hasInstanceMethod) LOG('    (无实例方法)', { c: Color.Gray });
+                } catch(_) { LOG('    <无法获取实例方法>', { c: Color.Yellow }); }
+                
+                LOG('', { c: Color.White });
+                LOG('}', { c: Color.Cyan });
+                LOG('✅ objectdump 完成 (共 ' + (clazz.getDeclaredFields().length) + ' 个字段, ' + (clazz.getDeclaredMethods().length) + ' 个方法)', { c: Color.Green });
+                
+                // 显示可深入查看的对象引用
+                if (referencedObjects.length > 0) {
+                    LOG('', { c: Color.White });
+                    LOG('📎 可深入查看的对象引用:', { c: Color.Cyan });
+                    for (var ri = 0; ri < referencedObjects.length; ri++) {
+                        var ref = referencedObjects[ri];
+                        LOG('    objectdump(' + ref.id + ')  // ' + ref.name, { c: Color.Blue });
+                    }
+                }
             } catch (e2) {
                 LOG('❌ objectdump 失败: ' + e2.message, { c: Color.Red });
             }
@@ -336,6 +529,521 @@ function objectdump(handle, fullname) {
     } catch (e) {
         LOG('❌ objectdump 失败: ' + e.message, { c: Color.Red });
         return false;
+    }
+}
+
+// ===== Wallbreaker-style 深度对象查看器 =====
+
+/**
+ * 获取对象所有字段（包含继承链上的所有字段）
+ */
+function __getAllFields(clazz) {
+    var allFields = [];
+    var visited = {};
+    var current = clazz;
+    while (current != null) {
+        try {
+            var className = String(current.getName());
+            if (className === 'java.lang.Object') break;
+            var fields = current.getDeclaredFields();
+            for (var i = 0; i < fields.length; i++) {
+                var f = fields[i];
+                var key = String(f.getName());
+                if (!visited[key]) {
+                    visited[key] = true;
+                    allFields.push({ field: f, declaredIn: className });
+                }
+            }
+            current = current.getSuperclass();
+        } catch (_) { break; }
+    }
+    return allFields;
+}
+
+/**
+ * 智能格式化字段值（支持常见类型的详细展示）
+ */
+function __formatFieldValue(val, depth, maxDepth, visited) {
+    if (val === null) return 'null';
+    if (typeof val === 'undefined') return 'undefined';
+    
+    try {
+        // 基本类型直接返回
+        var valType = typeof val;
+        if (valType === 'number' || valType === 'boolean') return String(val);
+        if (valType === 'string') return '"' + val + '"';
+        
+        // Java 对象
+        if (val.$h !== undefined || (val.getClass && typeof val.getClass === 'function')) {
+            var objClass = '';
+            try { objClass = String(val.getClass().getName()); } catch (_) { objClass = 'Object'; }
+            
+            // 字符串类型
+            if (objClass === 'java.lang.String') {
+                try { return '"' + String(val) + '"'; } catch (_) { return '<String>'; }
+            }
+            
+            // 数字包装类
+            if (objClass.match(/^java\.lang\.(Integer|Long|Short|Byte|Float|Double|Boolean|Character)$/)) {
+                try { return String(val) + ' (' + objClass.split('.').pop() + ')'; } catch (_) {}
+            }
+            
+            // 集合类型
+            if (objClass.match(/^java\.util\.(ArrayList|LinkedList|HashSet|TreeSet|Vector)/) || 
+                objClass.indexOf('List') !== -1 || objClass.indexOf('Set') !== -1) {
+                try {
+                    var size = val.size ? val.size() : '?';
+                    return '<' + objClass.split('.').pop() + '> size=' + size;
+                } catch (_) {}
+            }
+            
+            // Map 类型
+            if (objClass.match(/^java\.util\.(HashMap|TreeMap|LinkedHashMap|Hashtable|ConcurrentHashMap)/) ||
+                objClass.indexOf('Map') !== -1) {
+                try {
+                    var mapSize = val.size ? val.size() : '?';
+                    return '<' + objClass.split('.').pop() + '> size=' + mapSize;
+                } catch (_) {}
+            }
+            
+            // 数组类型
+            if (objClass.startsWith('[')) {
+                try {
+                    var arrLen = Java.use('java.lang.reflect.Array').getLength(val);
+                    return '<Array> length=' + arrLen;
+                } catch (_) { return '<Array>'; }
+            }
+            
+            // 其他对象：返回类名和 identityHashCode
+            try {
+                var System = Java.use('java.lang.System');
+                var hashCode = System.identityHashCode(val);
+                return '<' + objClass.split('.').pop() + '@' + hashCode + '>';
+            } catch (_) {
+                return '<' + objClass + '>';
+            }
+        }
+        
+        return String(val);
+    } catch (_) {
+        return '<格式化失败>';
+    }
+}
+
+/**
+ * objectview - Wallbreaker 风格的深度对象查看器
+ * @param {number|string} handle - objectsearch 返回的对象句柄
+ * @param {object} options - 选项: { depth: 1, fullname: false, showStatic: false, showInherited: true }
+ */
+function objectview(handle, options) {
+    options = options || {};
+    var maxDepth = (typeof options === 'number') ? options : (options.depth || 1);
+    var fullname = options.fullname || false;
+    var showStatic = options.showStatic !== false;
+    var showInherited = options.showInherited !== false;
+    
+    try {
+        var id = String(handle);
+        var entry = __obj_registry.byId[id];
+        if (!entry || !entry.obj) {
+            LOG('❌ 未找到对象句柄 #' + id + '，请先执行 objectsearch()', { c: Color.Red });
+            return false;
+        }
+        
+        Java.perform(function() {
+            try {
+                var obj = entry.obj;
+                var clazz = obj.getClass ? obj.getClass() : (obj.class ? obj.class : null);
+                var className = '';
+                try { className = clazz ? String(clazz.getName()) : (obj.$className || 'Object'); } catch(_) { className = 'Object'; }
+                
+                // 标题
+                LOG('', { c: Color.White });
+                LOG('╔══════════════════════════════════════════════════════════════', { c: Color.Cyan });
+                LOG('║ 📦 Object #' + id + ' <' + className + '>', { c: Color.Cyan });
+                LOG('╠══════════════════════════════════════════════════════════════', { c: Color.Cyan });
+                
+                // 类层次结构
+                LOG('║ 📊 Class Hierarchy:', { c: Color.Yellow });
+                var hierarchy = [];
+                var tmpClazz = clazz;
+                while (tmpClazz != null) {
+                    try {
+                        var hName = String(tmpClazz.getName());
+                        if (hName === 'java.lang.Object') break;
+                        hierarchy.push(hName);
+                        tmpClazz = tmpClazz.getSuperclass();
+                    } catch (_) { break; }
+                }
+                for (var h = 0; h < hierarchy.length; h++) {
+                    var indent = '  '.repeat(h);
+                    LOG('║   ' + indent + (h === 0 ? '└─ ' : '   └─ ') + hierarchy[h], { c: Color.Gray });
+                }
+                
+                // 获取所有字段（包含继承）
+                var allFields = showInherited ? __getAllFields(clazz) : [];
+                if (!showInherited) {
+                    try {
+                        var declaredFields = clazz.getDeclaredFields();
+                        for (var i = 0; i < declaredFields.length; i++) {
+                            allFields.push({ field: declaredFields[i], declaredIn: className });
+                        }
+                    } catch (_) {}
+                }
+                
+                // 分类字段
+                var instanceFields = [];
+                var staticFields = [];
+                var Modifier = Java.use('java.lang.reflect.Modifier');
+                
+                for (var fi = 0; fi < allFields.length; fi++) {
+                    var fInfo = allFields[fi];
+                    var f = fInfo.field;
+                    try {
+                        var mods = f.getModifiers();
+                        if (Modifier.isStatic(mods)) {
+                            staticFields.push(fInfo);
+                        } else {
+                            instanceFields.push(fInfo);
+                        }
+                    } catch (_) {
+                        instanceFields.push(fInfo);
+                    }
+                }
+                
+                // 实例字段
+                LOG('║', { c: Color.Cyan });
+                LOG('║ 🔷 Instance Fields (' + instanceFields.length + '):', { c: Color.Blue });
+                if (instanceFields.length === 0) {
+                    LOG('║   (无实例字段)', { c: Color.Gray });
+                }
+                for (var ii = 0; ii < instanceFields.length; ii++) {
+                    var iInfo = instanceFields[ii];
+                    var iField = iInfo.field;
+                    try {
+                        try { iField.setAccessible(true); } catch(_){}
+                        var iName = String(iField.getName());
+                        var iType = __formatTypeName(iField.getType(), fullname);
+                        var iVal = null;
+                        try { iVal = iField.get(obj); } catch (ee) { iVal = '<inaccessible: ' + ee.message + '>'; }
+                        var iValStr = __formatFieldValue(iVal, 0, maxDepth, {});
+                        
+                        var declaredHint = (showInherited && iInfo.declaredIn !== className) ? 
+                            ' [from ' + iInfo.declaredIn.split('.').pop() + ']' : '';
+                        
+                        LOG('║   • ' + iType + ' ' + iName + declaredHint, { c: Color.White });
+                        LOG('║       = ' + iValStr, { c: Color.Green });
+                    } catch (_) {}
+                }
+                
+                // 静态字段
+                if (showStatic && staticFields.length > 0) {
+                    LOG('║', { c: Color.Cyan });
+                    LOG('║ 🔶 Static Fields (' + staticFields.length + '):', { c: Color.Yellow });
+                    for (var si = 0; si < staticFields.length; si++) {
+                        var sInfo = staticFields[si];
+                        var sField = sInfo.field;
+                        try {
+                            try { sField.setAccessible(true); } catch(_){}
+                            var sName = String(sField.getName());
+                            var sType = __formatTypeName(sField.getType(), fullname);
+                            var sVal = null;
+                            try { sVal = sField.get(null); } catch (ee) { 
+                                try { sVal = sField.get(obj); } catch (ee2) { sVal = '<inaccessible>'; }
+                            }
+                            var sValStr = __formatFieldValue(sVal, 0, maxDepth, {});
+                            
+                            LOG('║   ◆ ' + sType + ' ' + sName, { c: Color.White });
+                            LOG('║       = ' + sValStr, { c: Color.Cyan });
+                        } catch (_) {}
+                    }
+                }
+                
+                LOG('║', { c: Color.Cyan });
+                LOG('╚══════════════════════════════════════════════════════════════', { c: Color.Cyan });
+                LOG('✅ objectview 完成 (共 ' + (instanceFields.length + staticFields.length) + ' 个字段)', { c: Color.Green });
+                
+            } catch (e2) {
+                LOG('❌ objectview 失败: ' + e2.message, { c: Color.Red });
+            }
+        });
+        return true;
+    } catch (e) {
+        LOG('❌ objectview 失败: ' + e.message, { c: Color.Red });
+        return false;
+    }
+}
+
+/**
+ * objectfields - 获取对象完整字段列表（包含继承链）
+ */
+function objectfields(handle, fullname) {
+    fullname = !!fullname;
+    try {
+        var id = String(handle);
+        var entry = __obj_registry.byId[id];
+        if (!entry || !entry.obj) {
+            LOG('❌ 未找到对象句柄 #' + id + '，请先执行 objectsearch()', { c: Color.Red });
+            return [];
+        }
+        
+        var result = [];
+        Java.perform(function() {
+            try {
+                var obj = entry.obj;
+                var clazz = obj.getClass();
+                var allFields = __getAllFields(clazz);
+                var Modifier = Java.use('java.lang.reflect.Modifier');
+                
+                for (var i = 0; i < allFields.length; i++) {
+                    var fInfo = allFields[i];
+                    var f = fInfo.field;
+                    try {
+                        try { f.setAccessible(true); } catch(_){}
+                        var name = String(f.getName());
+                        var type = __formatTypeName(f.getType(), fullname);
+                        var mods = f.getModifiers();
+                        var isStatic = Modifier.isStatic(mods);
+                        var val = null;
+                        try { val = isStatic ? f.get(null) : f.get(obj); } catch (_) { val = '<inaccessible>'; }
+                        
+                        result.push({
+                            name: name,
+                            type: type,
+                            value: __safeToString(val),
+                            isStatic: isStatic,
+                            declaredIn: fInfo.declaredIn
+                        });
+                    } catch (_) {}
+                }
+            } catch (e) {
+                LOG('❌ objectfields 失败: ' + e.message, { c: Color.Red });
+            }
+        });
+        
+        return result;
+    } catch (e) {
+        LOG('❌ objectfields 失败: ' + e.message, { c: Color.Red });
+        return [];
+    }
+}
+
+/**
+ * objectrefresh - 刷新对象当前值（直接实时读取）
+ */
+function objectrefresh(handle) {
+    try {
+        var id = String(handle);
+        var entry = __obj_registry.byId[id];
+        if (!entry || !entry.obj) {
+            LOG('❌ 未找到对象句柄 #' + id, { c: Color.Red });
+            return false;
+        }
+        LOG('🔄 刷新对象 #' + id + ' 的字段值...', { c: Color.Cyan });
+        return objectview(handle, { showInherited: true, showStatic: true });
+    } catch (e) {
+        LOG('❌ objectrefresh 失败: ' + e.message, { c: Color.Red });
+        return false;
+    }
+}
+
+/**
+ * objectexpand - 展开对象的某个字段（支持嵌套对象查看）
+ */
+function objectexpand(handle, fieldName) {
+    try {
+        var id = String(handle);
+        var entry = __obj_registry.byId[id];
+        if (!entry || !entry.obj) {
+            LOG('❌ 未找到对象句柄 #' + id, { c: Color.Red });
+            return null;
+        }
+        
+        var result = null;
+        Java.perform(function() {
+            try {
+                var obj = entry.obj;
+                var clazz = obj.getClass();
+                var allFields = __getAllFields(clazz);
+                var found = false;
+                
+                for (var i = 0; i < allFields.length; i++) {
+                    var fInfo = allFields[i];
+                    var f = fInfo.field;
+                    if (String(f.getName()) === fieldName) {
+                        found = true;
+                        try { f.setAccessible(true); } catch(_){}
+                        var Modifier = Java.use('java.lang.reflect.Modifier');
+                        var isStatic = Modifier.isStatic(f.getModifiers());
+                        var val = isStatic ? f.get(null) : f.get(obj);
+                        
+                        if (val === null) {
+                            LOG('⚠️ 字段 ' + fieldName + ' 的值为 null', { c: Color.Yellow });
+                            return;
+                        }
+                        
+                        // 检查是否是对象类型
+                        if (val.$h !== undefined || (val.getClass && typeof val.getClass === 'function')) {
+                            var newId = __registerObject(val);
+                            var valClass = String(val.getClass().getName());
+                            LOG('🔗 已注册字段 ' + fieldName + ' 为对象 #' + newId + ' <' + valClass + '>', { c: Color.Green });
+                            LOG('   使用 objectview(' + newId + ') 查看详情', { c: Color.Cyan });
+                            result = newId;
+                        } else {
+                            LOG('ℹ️ 字段 ' + fieldName + ' 是基本类型: ' + __safeToString(val), { c: Color.Blue });
+                            result = val;
+                        }
+                        break;
+                    }
+                }
+                
+                if (!found) {
+                    LOG('❌ 未找到字段: ' + fieldName, { c: Color.Red });
+                }
+            } catch (e) {
+                LOG('❌ objectexpand 失败: ' + e.message, { c: Color.Red });
+            }
+        });
+        
+        return result;
+    } catch (e) {
+        LOG('❌ objectexpand 失败: ' + e.message, { c: Color.Red });
+        return null;
+    }
+}
+
+/**
+ * objectlist - 展开 List/Set 集合类型
+ */
+function objectlist(handle, limit) {
+    limit = (typeof limit === 'number' && limit > 0) ? limit : 20;
+    try {
+        var id = String(handle);
+        var entry = __obj_registry.byId[id];
+        if (!entry || !entry.obj) {
+            LOG('❌ 未找到对象句柄 #' + id, { c: Color.Red });
+            return [];
+        }
+        
+        var items = [];
+        Java.perform(function() {
+            try {
+                var obj = entry.obj;
+                var className = String(obj.getClass().getName());
+                
+                // 检查是否是集合类型
+                var Collection = Java.use('java.util.Collection');
+                var isCollection = false;
+                try { isCollection = Collection.class.isInstance(obj); } catch(_){}
+                
+                if (!isCollection) {
+                    LOG('⚠️ 对象 #' + id + ' 不是 Collection 类型', { c: Color.Yellow });
+                    return;
+                }
+                
+                var size = obj.size();
+                LOG('📋 Collection #' + id + ' <' + className + '> size=' + size, { c: Color.Cyan });
+                
+                var iterator = obj.iterator();
+                var idx = 0;
+                while (iterator.hasNext() && idx < limit) {
+                    var item = iterator.next();
+                    var itemStr = __formatFieldValue(item, 0, 1, {});
+                    
+                    if (item !== null && (item.$h !== undefined || (item.getClass && typeof item.getClass === 'function'))) {
+                        var itemId = __registerObject(item);
+                        LOG('  [' + idx + '] #' + itemId + ' ' + itemStr, { c: Color.White });
+                        items.push({ index: idx, id: itemId, value: itemStr });
+                    } else {
+                        LOG('  [' + idx + '] ' + itemStr, { c: Color.White });
+                        items.push({ index: idx, id: null, value: itemStr });
+                    }
+                    idx++;
+                }
+                
+                if (size > limit) {
+                    LOG('  ... 共 ' + size + ' 项，显示前 ' + limit + ' 项', { c: Color.Gray });
+                }
+                LOG('✅ objectlist 完成', { c: Color.Green });
+            } catch (e) {
+                LOG('❌ objectlist 失败: ' + e.message, { c: Color.Red });
+            }
+        });
+        
+        return items;
+    } catch (e) {
+        LOG('❌ objectlist 失败: ' + e.message, { c: Color.Red });
+        return [];
+    }
+}
+
+/**
+ * objectmap - 展开 Map 类型
+ */
+function objectmap(handle, limit) {
+    limit = (typeof limit === 'number' && limit > 0) ? limit : 20;
+    try {
+        var id = String(handle);
+        var entry = __obj_registry.byId[id];
+        if (!entry || !entry.obj) {
+            LOG('❌ 未找到对象句柄 #' + id, { c: Color.Red });
+            return [];
+        }
+        
+        var items = [];
+        Java.perform(function() {
+            try {
+                var obj = entry.obj;
+                var className = String(obj.getClass().getName());
+                
+                // 检查是否是 Map 类型
+                var Map = Java.use('java.util.Map');
+                var isMap = false;
+                try { isMap = Map.class.isInstance(obj); } catch(_){}
+                
+                if (!isMap) {
+                    LOG('⚠️ 对象 #' + id + ' 不是 Map 类型', { c: Color.Yellow });
+                    return;
+                }
+                
+                var size = obj.size();
+                LOG('🗺️ Map #' + id + ' <' + className + '> size=' + size, { c: Color.Cyan });
+                
+                var entrySet = obj.entrySet();
+                var iterator = entrySet.iterator();
+                var idx = 0;
+                while (iterator.hasNext() && idx < limit) {
+                    var mapEntry = iterator.next();
+                    var key = mapEntry.getKey();
+                    var value = mapEntry.getValue();
+                    
+                    var keyStr = __formatFieldValue(key, 0, 1, {});
+                    var valueStr = __formatFieldValue(value, 0, 1, {});
+                    
+                    var valueId = null;
+                    if (value !== null && (value.$h !== undefined || (value.getClass && typeof value.getClass === 'function'))) {
+                        valueId = __registerObject(value);
+                        LOG('  ' + keyStr + ' => #' + valueId + ' ' + valueStr, { c: Color.White });
+                    } else {
+                        LOG('  ' + keyStr + ' => ' + valueStr, { c: Color.White });
+                    }
+                    items.push({ key: keyStr, value: valueStr, valueId: valueId });
+                    idx++;
+                }
+                
+                if (size > limit) {
+                    LOG('  ... 共 ' + size + ' 项，显示前 ' + limit + ' 项', { c: Color.Gray });
+                }
+                LOG('✅ objectmap 完成', { c: Color.Green });
+            } catch (e) {
+                LOG('❌ objectmap 失败: ' + e.message, { c: Color.Red });
+            }
+        });
+        
+        return items;
+    } catch (e) {
+        LOG('❌ objectmap 失败: ' + e.message, { c: Color.Red });
+        return [];
     }
 }
 
@@ -1954,10 +2662,25 @@ function help() {
     LOG("\n📊 对象分析工具", { c: Color.Yellow });
     var analyzeCommands = [
         ["classdump(className)", "导出类的方法和字段信息"],
-        ["objectdump(className)", "导出对象实例的字段值"],
+        ["objectdump(handle)", "导出对象实例的字段值（仅当前类）"],
         ["printJavaCallStack()", "打印当前Java调用栈"]
     ];
     analyzeCommands.forEach(function(cmd) {
+        LOG("  🔧 " + cmd[0], { c: Color.Green });
+        LOG("     " + cmd[1], { c: Color.White });
+    });
+    
+    // Wallbreaker 风格对象查看器
+    LOG("\n🔬 Wallbreaker 风格对象查看器", { c: Color.Yellow });
+    var wallbreakerCommands = [
+        ["objectview(handle, options)", "深度查看对象（含继承字段、静态字段）"],
+        ["objectfields(handle)", "获取对象完整字段列表（含继承链）"],
+        ["objectrefresh(handle)", "刷新对象查看最新值"],
+        ["objectexpand(handle, fieldName)", "展开对象的某个字段（注册为新对象）"],
+        ["objectlist(handle, limit)", "展开 List/Set 集合内容"],
+        ["objectmap(handle, limit)", "展开 Map 集合内容"]
+    ];
+    wallbreakerCommands.forEach(function(cmd) {
         LOG("  🔧 " + cmd[0], { c: Color.Green });
         LOG("     " + cmd[1], { c: Color.White });
     });
@@ -2160,6 +2883,13 @@ global.classsearch = classsearch;
 global.objectsearch = objectsearch;
 global.classdump = classdump;
 global.objectdump = objectdump;
+// Wallbreaker 风格对象查看器
+global.objectview = objectview;
+global.objectfields = objectfields;
+global.objectrefresh = objectrefresh;
+global.objectexpand = objectexpand;
+global.objectlist = objectlist;
+global.objectmap = objectmap;
 // OkHttp Logger 导出（已内置）
 global.okhttpFind = okhttpFind;
 global.okhttpSwitchLoader = okhttpSwitchLoader;

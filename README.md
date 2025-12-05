@@ -96,6 +96,19 @@ python3 fridac
 | `traceclass <class>` | 追踪类的所有方法 |
 | `tracemethod <method>` | 追踪特定方法 |
 | `findClasses('pattern')` | 查找匹配的类 |
+| `classdump('类名')` | 查看类的完整结构 |
+
+### 对象搜索与深度查看（Wallbreaker-style）
+
+| 命令 | 说明 |
+|------|------|
+| `objectsearch('类名')` | 搜索类的实例对象，返回句柄 ID |
+| `objectdump(句柄ID)` | 查看对象完整信息（字段、方法、构造器） |
+| `objectview(句柄ID)` | 精美格式查看对象（含类继承链） |
+| `objectfields(句柄ID)` | 获取对象所有字段列表 |
+| `objectrefresh(句柄ID)` | 刷新对象当前字段值 |
+
+> 💡 **深度对象遍历**：`objectdump` 会自动注册字段中的对象引用，显示为 `<ClassName@句柄ID>` 格式，可继续用 `objectdump(新ID)` 深入查看，实现类似 Objection Wallbreaker 的对象遍历功能。
 
 ### 接口/继承查找
 
