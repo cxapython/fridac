@@ -130,7 +130,31 @@ fridac/
 
 ## 🔧 自定义脚本
 
-在 `scripts/` 目录创建 `.js` 文件，使用 JSDoc 注释：
+fridac 支持多个脚本目录（按优先级加载，后加载覆盖先加载）：
+
+| 目录 | 说明 | 用途 |
+|------|------|------|
+| `安装目录/scripts/` | 随 fridac 安装的脚本 | 内置工具 |
+| `~/.fridac/scripts/` | 用户全局脚本 | 个人工具库 |
+| `当前目录/scripts/` | 项目特定脚本 | 项目专用 |
+| `FRIDAC_SCRIPTS_PATH` | 环境变量指定 | 灵活配置 |
+
+### 添加脚本
+
+```bash
+# 方式1：添加到用户全局目录（任意目录可用）
+mkdir -p ~/.fridac/scripts
+vim ~/.fridac/scripts/my_hooks.js
+
+# 方式2：添加到当前项目目录
+mkdir -p ./scripts
+vim ./scripts/project_hooks.js
+
+# 方式3：使用环境变量
+export FRIDAC_SCRIPTS_PATH="/path/to/my/scripts"
+```
+
+### 脚本格式
 
 ```javascript
 /**
@@ -143,10 +167,11 @@ function monitorLogin(showStack) {
 }
 ```
 
-然后在 fridac 中使用：
+### 使用
+
 ```bash
-fridac> reload_scripts  # 重载脚本
-fridac> monitorLogin(true)
+fridac> reload_scripts     # 重载所有脚本
+fridac> monitorLogin(true) # 执行函数
 ```
 
 ## 📝 许可证

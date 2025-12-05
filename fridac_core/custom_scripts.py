@@ -48,12 +48,17 @@ class CustomScriptManager:
     自定义脚本管理器
     
     功能：
-    1. 自动扫描 scripts/ 目录
+    1. 自动扫描多个 scripts/ 目录
     2. 解析 JavaScript 函数定义和注释
     3. 动态生成 RPC 导出
     4. 集成任务管理
     5. 支持热重载
     6. 提供自动补全和帮助信息
+    
+    脚本目录优先级（后加载的覆盖先加载的）：
+    1. 安装目录/scripts/
+    2. ~/.fridac/scripts/
+    3. 当前目录/scripts/
     """
     
     def __init__(self, base_dir: str):
@@ -64,17 +69,59 @@ class CustomScriptManager:
             base_dir: fridac 项目根目录
         """
         self.base_dir = base_dir
-        self.scripts_dir = os.path.join(base_dir, 'scripts')
+        self.scripts_dirs = self._get_scripts_dirs()
         self.scripts: Dict[str, CustomScript] = {}
         self.functions: Dict[str, CustomFunction] = {}
         
-        # 确保scripts目录存在
-        if not os.path.exists(self.scripts_dir):
-            os.makedirs(self.scripts_dir)
-            log_info(f"✅ 已创建自定义脚本目录: {self.scripts_dir}")
+        # 确保至少一个scripts目录存在
+        primary_scripts_dir = os.path.join(base_dir, 'scripts')
+        if not os.path.exists(primary_scripts_dir):
+            os.makedirs(primary_scripts_dir)
+            log_info(f"✅ 已创建自定义脚本目录: {primary_scripts_dir}")
             self._create_example_scripts()
         
-        log_info(f"🎯 自定义脚本管理器初始化完成，监控目录: {self.scripts_dir}")
+        log_info(f"🎯 自定义脚本管理器初始化完成，监控目录: {len(self.scripts_dirs)} 个")
+        for d in self.scripts_dirs:
+            if os.path.exists(d):
+                log_debug(f"   📁 {d}")
+    
+    def _get_scripts_dirs(self) -> List[str]:
+        """
+        获取所有脚本目录
+        
+        Returns:
+            脚本目录列表（按优先级排序，后加载覆盖先加载）
+        """
+        dirs = []
+        
+        # 1. 安装目录/scripts/
+        install_scripts = os.path.join(self.base_dir, 'scripts')
+        dirs.append(install_scripts)
+        
+        # 2. ~/.fridac/scripts/（用户全局脚本）
+        user_scripts = os.path.expanduser('~/.fridac/scripts')
+        if user_scripts not in dirs:
+            dirs.append(user_scripts)
+        
+        # 3. 当前目录/scripts/（项目特定脚本）
+        cwd_scripts = os.path.join(os.getcwd(), 'scripts')
+        if cwd_scripts not in dirs and cwd_scripts != install_scripts:
+            dirs.append(cwd_scripts)
+        
+        # 4. FRIDAC_SCRIPTS_PATH 环境变量（可指定多个，用:分隔）
+        env_paths = os.environ.get('FRIDAC_SCRIPTS_PATH', '')
+        if env_paths:
+            for p in env_paths.split(':'):
+                p = p.strip()
+                if p and p not in dirs:
+                    dirs.append(p)
+        
+        return dirs
+    
+    @property
+    def scripts_dir(self) -> str:
+        """兼容旧代码，返回主脚本目录"""
+        return self.scripts_dirs[0] if self.scripts_dirs else os.path.join(self.base_dir, 'scripts')
     
     def _create_example_scripts(self):
         """创建示例脚本"""
@@ -275,38 +322,52 @@ function monitorSensitiveNetwork(sensitiveFields) {
     
     def scan_scripts(self) -> int:
         """
-        扫描scripts目录，加载所有JavaScript脚本
+        扫描所有scripts目录，加载JavaScript脚本
+        
+        扫描顺序（后加载的同名函数会覆盖先加载的）：
+        1. 安装目录/scripts/
+        2. ~/.fridac/scripts/
+        3. 当前目录/scripts/
+        4. FRIDAC_SCRIPTS_PATH 环境变量指定的目录
         
         Returns:
             成功加载的脚本数量
         """
-        if not os.path.exists(self.scripts_dir):
-            log_warning(f"⚠️ 脚本目录不存在: {self.scripts_dir}")
-            return 0
-        
         loaded_count = 0
         error_count = 0
+        scanned_dirs = 0
 
-        # 递归扫描 scripts/ 子目录，支持按文件夹分类
-        for dirpath, _dirnames, filenames in os.walk(self.scripts_dir):
-            for filename in filenames:
-                if not filename.endswith('.js'):
-                    continue
+        for scripts_dir in self.scripts_dirs:
+            if not os.path.exists(scripts_dir):
+                continue
+            
+            scanned_dirs += 1
+            log_debug(f"📂 扫描脚本目录: {scripts_dir}")
 
-                file_path = os.path.join(dirpath, filename)
-                # 使用相对路径作为脚本唯一键，避免同名文件冲突
-                rel_key = os.path.relpath(file_path, self.scripts_dir)
+            # 递归扫描 scripts/ 子目录，支持按文件夹分类
+            for dirpath, _dirnames, filenames in os.walk(scripts_dir):
+                for filename in filenames:
+                    if not filename.endswith('.js'):
+                        continue
 
-                try:
-                    if self._load_script(file_path, rel_key):
-                        loaded_count += 1
-                    else:
+                    file_path = os.path.join(dirpath, filename)
+                    # 使用相对路径作为脚本唯一键
+                    rel_key = os.path.relpath(file_path, scripts_dir)
+
+                    try:
+                        if self._load_script(file_path, rel_key):
+                            loaded_count += 1
+                        else:
+                            error_count += 1
+                    except Exception as e:
+                        log_error(f"❌ 加载脚本失败 {rel_key}: {e}")
                         error_count += 1
-                except Exception as e:
-                    log_error(f"❌ 加载脚本失败 {rel_key}: {e}")
-                    error_count += 1
         
-        log_success(f"✅ 脚本扫描完成: 成功 {loaded_count}, 失败 {error_count}")
+        if scanned_dirs == 0:
+            log_warning("⚠️ 没有找到任何脚本目录")
+        else:
+            log_success(f"✅ 脚本扫描完成: {scanned_dirs} 个目录, 成功 {loaded_count}, 失败 {error_count}")
+        
         return loaded_count
     
     def _load_script(self, file_path: str, key_name: Optional[str] = None) -> bool:
