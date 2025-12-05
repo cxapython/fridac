@@ -29,10 +29,17 @@ except ImportError:
     RICH_AVAILABLE = False
 
 from .logger import log_info, log_success, log_error, log_debug, log_warning, log_exception, get_console, render_structured_event
-from .completer import FridacCompleter
+from .completer import FridacCompleter, get_prompt_toolkit_available
 from .script_manager import create_frida_script, get_custom_script_manager
 from .task_manager import FridaTaskManager, TaskType, TaskStatus
 from .script_templates import ScriptTemplateEngine
+
+# prompt_toolkit 支持（objection 风格内联提示）
+try:
+    from .completer import create_prompt_session, PROMPT_TOOLKIT_AVAILABLE
+except ImportError:
+    PROMPT_TOOLKIT_AVAILABLE = False
+    create_prompt_session = None
 
 # 命令历史记录文件（默认路径；实际读取时有回退逻辑）
 HISTORY_FILE = os.path.expanduser("~/.fridac_history")
@@ -712,8 +719,28 @@ def run_interactive_session(session):
     """运行交互式会话主循环"""
     console = get_console()
     
-    # 设置历史与补全
-    setup_history()
+    # 检测是否可以使用 prompt_toolkit（objection 风格）
+    use_prompt_toolkit = False
+    pt_session = None
+    completer = FridacCompleter()
+    
+    try:
+        stdin_is_tty = sys.stdin.isatty()
+    except Exception:
+        stdin_is_tty = True
+    
+    if stdin_is_tty and get_prompt_toolkit_available():
+        try:
+            pt_session = create_prompt_session(completer, HISTORY_FILE)
+            use_prompt_toolkit = True
+            log_info("✨ 已启用 objection 风格内联提示（输入时显示灰色建议，Tab 补全）")
+        except Exception as e:
+            log_debug(f"prompt_toolkit 初始化失败，回退到 readline: {e}")
+            use_prompt_toolkit = False
+    
+    if not use_prompt_toolkit:
+        # 回退到 readline 模式
+        setup_history()
     
     # 显示交互模式提示信息
     if RICH_AVAILABLE and console:
@@ -722,15 +749,11 @@ def run_interactive_session(session):
         _show_basic_interactive_info()
     
     # 非交互环境降级提示
-    try:
-        stdin_is_tty = sys.stdin.isatty()
-    except Exception:
-        stdin_is_tty = True
     if not stdin_is_tty:
         log_warning("检测到非交互输入环境（可能通过管道或不支持的终端运行），输入将降级处理。建议直接在终端运行 fridac 以获得最佳体验。")
 
-    # 简单的输入读取封装，处理 OSError(Errno 22) 等异常
-    def _read_user_input(prompt: str) -> str:
+    # 简单的输入读取封装（readline 模式），处理 OSError(Errno 22) 等异常
+    def _read_user_input_readline(prompt: str) -> str:
         try:
             return input(prompt)
         except OSError as e:
@@ -750,11 +773,24 @@ def run_interactive_session(session):
                 # 无法读取，抛回让上层处理
                 raise e
 
+    # prompt_toolkit 风格的提示符（带颜色）
+    def _get_pt_prompt():
+        from prompt_toolkit.formatted_text import HTML
+        return HTML('<prompt>fridac</prompt>> ')
+
     # 交互循环
     while session.running:
         try:
-            # 使用封装后的读取方法
-            user_input = _read_user_input("fridac> ").strip()
+            # 根据模式选择输入方式
+            if use_prompt_toolkit and pt_session:
+                try:
+                    user_input = pt_session.prompt(_get_pt_prompt()).strip()
+                except KeyboardInterrupt:
+                    # Ctrl+C 不退出，只清空当前行
+                    print()
+                    continue
+            else:
+                user_input = _read_user_input_readline("fridac> ").strip()
             
             if not user_input:
                 continue

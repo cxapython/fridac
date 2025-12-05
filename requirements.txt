@@ -7,6 +7,9 @@ frida>=14.0.0
 # Rich - 美化终端输出 (Python 3.6.1+)
 rich>=10.0.0
 
+# prompt_toolkit - 交互式命令行（objection 风格内联提示）
+prompt_toolkit>=3.0.0
+
 # Esprima - JavaScript AST 解析器 (可选，用于更准确的自定义脚本解析)
 # 如果没有安装，会自动回退到正则表达式解析
 esprima>=4.0.0

@@ -1,6 +1,6 @@
 """
 fridac 自动补全系统模块
-提供智能补全和函数帮助功能
+提供智能补全和 objection 风格的内联灰色提示功能
 """
 
 import readline
@@ -13,6 +13,17 @@ try:
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
+
+# prompt_toolkit 支持（objection 风格内联提示）
+try:
+    from prompt_toolkit import prompt as pt_prompt
+    from prompt_toolkit.history import FileHistory, InMemoryHistory
+    from prompt_toolkit.auto_suggest import AutoSuggest, Suggestion
+    from prompt_toolkit.completion import Completer as PTCompleter, Completion
+    from prompt_toolkit.styles import Style
+    PROMPT_TOOLKIT_AVAILABLE = True
+except ImportError:
+    PROMPT_TOOLKIT_AVAILABLE = False
 
 from .logger import get_console
 from .script_manager import get_custom_script_manager
@@ -163,10 +174,8 @@ class FridacCompleter:
         # 重新加载
         self._load_custom_functions()
     
-    # 已移除未使用的 show_completion_help 方法
-    
     def complete(self, text, state):
-        """带模式匹配的增强补全"""
+        """带模式匹配的增强补全（readline 版本）"""
         if state == 0:
             # First time this text is completed
             self.matches = []
@@ -192,3 +201,160 @@ class FridacCompleter:
             return self.matches[state]
         else:
             return None
+
+
+# ==================== prompt_toolkit 版本（objection 风格）====================
+
+if PROMPT_TOOLKIT_AVAILABLE:
+    
+    class FridacAutoSuggest(AutoSuggest):
+        """
+        objection 风格的内联灰色提示
+        基于已有命令和历史记录提供建议
+        """
+        
+        def __init__(self, completer: 'FridacCompleter'):
+            self.completer = completer
+            # 按长度排序函数名，优先匹配更长的
+            self._sorted_functions = sorted(
+                completer.functions.keys(), 
+                key=lambda x: (-len(x), x)
+            )
+        
+        def get_suggestion(self, buffer, document):
+            """获取内联建议（灰色提示文本）"""
+            text = document.text_before_cursor
+            
+            if not text:
+                return None
+            
+            # 获取当前输入的最后一个词
+            # 处理空格分隔的命令，如 "traceclass com"
+            words = text.split()
+            if not words:
+                return None
+            
+            current_word = words[-1] if words else text
+            
+            # 如果光标在空格后，不提供建议
+            if text.endswith(' '):
+                return None
+            
+            # 查找匹配的函数
+            for func_name in self._sorted_functions:
+                if func_name.startswith(current_word) and func_name != current_word:
+                    # 返回剩余部分作为建议
+                    suggestion = func_name[len(current_word):]
+                    # 如果是函数，添加括号
+                    if not text.endswith('('):
+                        suggestion += '('
+                    return Suggestion(suggestion)
+            
+            # 查找匹配的类名模式（在引号内时）
+            if "'" in text or '"' in text:
+                for category, patterns in self.completer.common_patterns.items():
+                    for pattern in patterns:
+                        if pattern.startswith(current_word) and pattern != current_word:
+                            return Suggestion(pattern[len(current_word):])
+            
+            return None
+
+
+    class FridacPTCompleter(PTCompleter):
+        """
+        prompt_toolkit 的补全器
+        提供 Tab 补全功能
+        """
+        
+        def __init__(self, completer: 'FridacCompleter'):
+            self.completer = completer
+        
+        def get_completions(self, document, complete_event):
+            """生成补全选项"""
+            text = document.text_before_cursor
+            
+            # 获取当前正在输入的词
+            words = text.split()
+            current_word = words[-1] if words and not text.endswith(' ') else ''
+            
+            # 匹配函数名
+            for func_name, (desc, example) in self.completer.functions.items():
+                if func_name.startswith(current_word):
+                    # 计算要补全的部分
+                    completion_text = func_name[len(current_word):]
+                    if not text.endswith('('):
+                        completion_text += '('
+                    
+                    yield Completion(
+                        completion_text,
+                        start_position=0,
+                        display=func_name,
+                        display_meta=desc
+                    )
+            
+            # 在引号内时补全类名模式
+            if "'" in text or '"' in text:
+                for category, patterns in self.completer.common_patterns.items():
+                    for pattern in patterns:
+                        if pattern.startswith(current_word) and pattern != current_word:
+                            yield Completion(
+                                pattern[len(current_word):],
+                                start_position=0,
+                                display=pattern,
+                                display_meta=category
+                            )
+
+
+    # prompt_toolkit 样式（类似 objection）
+    FRIDAC_STYLE = Style.from_dict({
+        # 提示符颜色
+        'prompt': '#00aa00 bold',
+        # 内联建议颜色（灰色）
+        'auto-suggestion': '#666666',
+        # 补全菜单
+        'completion-menu': 'bg:#333333 #ffffff',
+        'completion-menu.completion.current': 'bg:#00aa00 #000000',
+        'completion-menu.completion': 'bg:#333333 #ffffff',
+        'completion-menu.meta.completion': 'bg:#333333 #888888',
+        'completion-menu.meta.completion.current': 'bg:#00aa00 #000000',
+    })
+
+
+    def create_prompt_session(completer: 'FridacCompleter', history_file: str = None):
+        """
+        创建 prompt_toolkit 会话
+        
+        Args:
+            completer: FridacCompleter 实例
+            history_file: 历史记录文件路径（可选）
+        
+        Returns:
+            配置好的 PromptSession 或 None（如果 prompt_toolkit 不可用）
+        """
+        from prompt_toolkit import PromptSession
+        
+        # 历史记录
+        if history_file:
+            try:
+                history = FileHistory(history_file)
+            except Exception:
+                history = InMemoryHistory()
+        else:
+            history = InMemoryHistory()
+        
+        # 创建会话
+        session = PromptSession(
+            history=history,
+            auto_suggest=FridacAutoSuggest(completer),
+            completer=FridacPTCompleter(completer),
+            style=FRIDAC_STYLE,
+            complete_while_typing=False,  # 不自动弹窗，只在 Tab 时触发
+            enable_history_search=True,   # 支持 Ctrl+R 搜索历史
+        )
+        
+        return session
+
+
+def get_prompt_toolkit_available():
+    """检查 prompt_toolkit 是否可用"""
+    return PROMPT_TOOLKIT_AVAILABLE
