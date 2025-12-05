@@ -228,6 +228,12 @@ def main():
   fridac -f com.example.app                 # Spawn 模式启动
   fridac -p com.example.app                 # 附加到应用
   
+自动管理 frida-server:
+  fridac --auto                             # 自动检测并启动 frida-server
+  fridac --auto -f com.example.app          # 自动启动 server 后 spawn 应用
+  fridac --server-only                      # 仅启动 frida-server 不连接应用
+  fridac --stop-server                      # 停止 frida-server
+  
 早期 Hook (仅 Spawn 模式):
   fridac -f com.app --hook traceRegisterNatives
   fridac -f com.app --preset jni_analysis
@@ -246,6 +252,16 @@ def main():
     
     parser.add_argument('--spawn', type=str,
                        help='Spawn 模式 (同 -f)')
+    
+    # frida-server 管理选项
+    parser.add_argument('--auto', action='store_true',
+                       help='自动检测并启动 frida-server')
+    
+    parser.add_argument('--server-only', action='store_true',
+                       help='仅启动 frida-server，不连接应用')
+    
+    parser.add_argument('--stop-server', action='store_true',
+                       help='停止 frida-server')
     
     parser.add_argument('--hook', type=str, 
                        help='启动后立即执行的 Hook 函数')
@@ -272,6 +288,27 @@ def main():
                        version='fridac 1.0.0 (Frida {})'.format(get_frida_version()))
     
     args = parser.parse_args()
+    
+    # 处理 frida-server 管理命令
+    if args.stop_server:
+        from fridac_core.device_manager import DeviceManager
+        manager = DeviceManager()
+        if manager.check_adb_connection():
+            manager.check_root()
+            manager.stop_frida_server()
+        return
+    
+    if args.server_only:
+        from fridac_core.device_manager import ensure_frida_server
+        ensure_frida_server()
+        return
+    
+    # 如果指定了 --auto，先确保 frida-server 运行
+    if args.auto:
+        from fridac_core.device_manager import ensure_frida_server
+        if not ensure_frida_server():
+            log_error("❌ 无法启动 frida-server，退出")
+            return
     
     # 如果指定了数据路径，更新环境变量
     if args.data_path:
