@@ -203,12 +203,15 @@ class DeviceManager:
             log_success("✅ frida-server 正在运行")
             return True
         
-        # 备用：检查进程名 (fs 或 frida)
-        code, stdout, _ = self._run_adb_shell('ps -A | grep -E "(frida|/fs$)"')
+        # 备用：检查 frida-server 或 fs[0-9]* 进程（排除系统进程）
+        code, stdout, _ = self._run_adb_shell("ps -A | grep -E 'frida-server|/fs[0-9]'")
         if code == 0 and stdout.strip():
-            self.frida_server_running = True
-            log_success("✅ frida-server 正在运行")
-            return True
+            # 过滤系统进程（如 fsnotify_mark 等）
+            for line in stdout.strip().split('\n'):
+                if 'frida-server' in line or '/fs1' in line or '/fs2' in line:
+                    self.frida_server_running = True
+                    log_success("✅ frida-server 正在运行")
+                    return True
         
         self.frida_server_running = False
         log_warning("⚠️ frida-server 未运行")

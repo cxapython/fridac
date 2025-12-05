@@ -443,8 +443,27 @@ class FridacSession:
             log_error("找不到进程: {}".format(app_name))
             return False
         except frida.ServerNotRunningError:
-            log_error("Frida 服务器未运行，请确保设备已连接并启动 frida-server")
-            return False
+            # 自动尝试启动 frida-server（只尝试一次，避免循环）
+            if not getattr(self, '_server_start_attempted', False):
+                self._server_start_attempted = True
+                log_warning("⚠️ frida-server 未运行，正在自动启动...")
+                try:
+                    from fridac_core.device_manager import ensure_frida_server
+                    if ensure_frida_server():
+                        log_success("✅ frida-server 已启动，等待就绪...")
+                        import time
+                        time.sleep(1)  # 等待 frida 客户端检测到服务器
+                        # 重新尝试连接
+                        return self.connect_to_app(app_name, spawn_mode)
+                    else:
+                        log_error("❌ 无法启动 frida-server")
+                        return False
+                except Exception as e:
+                    log_error(f"❌ 启动 frida-server 失败: {e}")
+                    return False
+            else:
+                log_error("❌ frida-server 启动后仍无法连接，请检查设备状态")
+                return False
         except Exception as e:
             log_error("连接失败: {}".format(e))
             return False
