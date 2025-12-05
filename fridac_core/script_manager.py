@@ -292,14 +292,17 @@ function help() {
     
     LOG("\\n☕ Java Hook 函数:", { c: Color.Green });
     LOG("  📋 类追踪:", { c: Color.Blue });
-    LOG("    traceClass(className) - 跟踪类的所有方法", { c: Color.White });
-    LOG("    hookAllMethodsInJavaClass(className) - 跟踪类的所有方法（新函数名）", { c: Color.White });
-    LOG("      示例: traceClass('com.example.MainActivity')", { c: Color.Yellow });
+    LOG("    traceClass(className, showStack, stackLines) - 跟踪类的所有方法", { c: Color.White });
+    LOG("      示例: traceClass('com.example.MainActivity')       // 不显示调用栈", { c: Color.Yellow });
+    LOG("      示例: traceClass('com.example.MainActivity', 1)    // 显示调用栈", { c: Color.Yellow });
+    LOG("      示例: traceClass('com.example.MainActivity', 1, 30) // 显示30行调用栈", { c: Color.Yellow });
     
     LOG("  🎯 方法追踪:", { c: Color.Blue });
-    LOG("    traceMethod(classMethod, showTrace, returnValue) - 跟踪特定方法", { c: Color.White });
-    LOG("    hookJavaMethodWithTracing(methodName, enableStackTrace, customReturnValue) - 跟踪特定方法（新函数名）", { c: Color.White });
-    LOG("      示例: traceMethod('com.example.MainActivity.onCreate', true)", { c: Color.Yellow });
+    LOG("    traceMethod(method, showStack, lines, retVal, fieldInfo) - 跟踪特定方法（功能最全）", { c: Color.White });
+    LOG("      示例: traceMethod('com.a.B.m', 1)                 // 显示调用栈", { c: Color.Yellow });
+    LOG("      示例: traceMethod('com.a.B.m', 1, 30)             // 显示30行调用栈", { c: Color.Yellow });
+    LOG("      示例: traceMethod('com.a.B.m', 0, 0, true)        // 修改返回值为true", { c: Color.Yellow });
+    LOG("      示例: traceMethod('com.a.B.m', 1, 20, null, 1)    // 调用栈+字段信息", { c: Color.Yellow });
     
     LOG("  🔍 类查找:", { c: Color.Blue });
     LOG("    findClasses(pattern, showMethods) - 查找类", { c: Color.White });

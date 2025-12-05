@@ -24,9 +24,8 @@ class FridacCompleter:
         # Available functions for completion with descriptions and examples
         self.functions = {
             # ===== Java Hook 核心函数 =====
-            'traceClass': ('🏛️ 跟踪类的所有方法', "traceClass('com.example.MainActivity')"),
-            'traceMethod': ('🎯 跟踪特定方法', "traceMethod('com.example.Class.method')"),
-            'advancedMethodTracing': ('🔥 高级方法追踪（带堆栈和字段）', "advancedMethodTracing('com.example.Class.method', true, true)"),
+            'traceClass': ('🏛️ 跟踪类的所有方法', "traceClass('com.a.B', 1)  // 1=显示调用栈"),
+            'traceMethod': ('🎯 跟踪方法(完整版)', "traceMethod('com.a.B.m', 1, 20, null, 1)  // 调用栈+字段"),
             'findClasses': ('🔍 查找匹配的类', "findClasses('MainActivity', true)"),
             'enumAllClasses': ('📋 枚举包下所有类', "enumAllClasses('com.example')"),
             'describeJavaClass': ('📖 描述Java类详细信息', "describeJavaClass('java.lang.String')"),

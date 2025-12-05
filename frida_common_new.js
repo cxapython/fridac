@@ -415,8 +415,15 @@ function findTragetClassLoader(className) {
 // 已移除 smartTrace（请使用 intelligentHookDispatcher）
 
 // 跟踪类的所有方法
-function traceClass(className) {
-    LOG("🏛️ 跟踪类: " + className, { c: Color.Cyan });
+// @param className - 类名 (com.example.Class)
+// @param showStack - 是否显示调用栈 (可选，默认false，传1或true启用)
+// @param stackLines - 调用栈显示行数 (可选，默认20行)
+function traceClass(className, showStack, stackLines) {
+    // 参数处理：支持数字1或布尔true
+    var enableStack = showStack === true || showStack === 1 || showStack === '1' || showStack === 'true';
+    var maxStackLines = (typeof stackLines === 'number' && stackLines > 0) ? stackLines : 20;
+    
+    LOG("🏛️ 跟踪类: " + className + (enableStack ? " (含调用栈, " + maxStackLines + "行)" : ""), { c: Color.Cyan });
     
     Java.perform(function() {
         try {
@@ -426,7 +433,7 @@ function traceClass(className) {
             try {
                 targetClass = Java.use(className);
             } catch (error) {
-                if (error.message.includes("ClassNotFoundException")) {
+                if ((error.message || '').indexOf("ClassNotFoundException") !== -1) {
                     LOG("❌ 类未在默认ClassLoader中找到，搜索其他ClassLoader...", { c: Color.Yellow });
                     var foundLoader = findTragetClassLoader(className);
                     if (foundLoader) {
@@ -450,7 +457,7 @@ function traceClass(className) {
                     var methodName = method.getName();
                     
                     // 跳过特殊方法
-                    if (methodName.includes("$") || methodName.includes("<")) {
+                    if (methodName.indexOf("$") !== -1 || methodName.indexOf("<") !== -1) {
                         return;
                     }
                     
@@ -459,6 +466,11 @@ function traceClass(className) {
                         targetClass[methodName].implementation = function() {
                             var fullMethodName = className + "." + methodName;
                             LOG("\n*** 进入 " + fullMethodName, { c: Color.Green });
+                            
+                            // 显示调用栈
+                            if (enableStack) {
+                                printStack(false, maxStackLines);
+                            }
                             
                             // 打印参数
                             if (arguments.length > 0) {
@@ -490,9 +502,24 @@ function traceClass(className) {
     });
 }
 
-// 跟踪特定方法
-function traceMethod(fullyQualifiedMethodName) {
-    LOG("🎯 跟踪方法: " + fullyQualifiedMethodName, { c: Color.Cyan });
+// 跟踪特定方法（功能最全版本，合并了 hookJavaMethodWithTracing 和 advancedMethodTracing）
+// @param fullyQualifiedMethodName - 完整方法名 (com.example.Class.method)
+// @param showStack - 是否显示调用栈 (可选，默认false，传1或true启用)
+// @param stackLines - 调用栈显示行数 (可选，默认20行)
+// @param customReturnValue - 自定义返回值 (可选，设置后替换原始返回值)
+// @param showFieldInfo - 是否显示对象字段信息 (可选，默认false，传1或true启用)
+function traceMethod(fullyQualifiedMethodName, showStack, stackLines, customReturnValue, showFieldInfo) {
+    // 参数处理：支持数字1或布尔true
+    var enableStack = showStack === true || showStack === 1 || showStack === '1' || showStack === 'true';
+    var maxStackLines = (typeof stackLines === 'number' && stackLines > 0) ? stackLines : 20;
+    var hasCustomReturn = customReturnValue !== undefined && customReturnValue !== null;
+    var enableFieldInfo = showFieldInfo === true || showFieldInfo === 1 || showFieldInfo === '1' || showFieldInfo === 'true';
+    
+    var logMsg = "🎯 跟踪方法: " + fullyQualifiedMethodName;
+    if (enableStack) logMsg += " [调用栈:" + maxStackLines + "行]";
+    if (hasCustomReturn) logMsg += " [自定义返回:" + customReturnValue + "]";
+    if (enableFieldInfo) logMsg += " [字段信息]";
+    LOG(logMsg, { c: Color.Cyan });
 
     // 解析类名和方法名
     var lastDotIndex = fullyQualifiedMethodName.lastIndexOf('.');
@@ -535,51 +562,79 @@ function traceMethod(fullyQualifiedMethodName) {
             var methodWrapper = targetClass[methodName];
             var overloads = methodWrapper.overloads || [];
 
+            // Hook 实现的核心逻辑（复用）
+            var createHookImpl = function(originalCall) {
+                return function() {
+                    LOG("\n*** 进入 " + fullyQualifiedMethodName, { c: Color.Green });
+
+                    // 显示调用栈
+                    if (enableStack) {
+                        printStack(false, maxStackLines);
+                    }
+
+                    // 显示对象字段信息
+                    if (enableFieldInfo) {
+                        try {
+                            var fields = this.class.getDeclaredFields();
+                            LOG("📋 对象字段 (最多5个):", { c: Color.Blue });
+                            for (var f = 0; f < Math.min(fields.length, 5); f++) {
+                                var field = fields[f];
+                                field.setAccessible(true);
+                                try {
+                                    var fieldValue = field.get(this);
+                                    LOG("  " + field.getName() + " (" + field.getType().getName() + "): " + fieldValue, { c: Color.Gray });
+                                } catch (fe) {
+                                    LOG("  " + field.getName() + " (" + field.getType().getName() + "): <无法访问>", { c: Color.Gray });
+                                }
+                            }
+                            if (fields.length > 5) {
+                                LOG("  ... 还有 " + (fields.length - 5) + " 个字段", { c: Color.Gray });
+                            }
+                        } catch (e) {
+                            LOG("⚠️ 无法获取字段信息: " + e.message, { c: Color.Yellow });
+                        }
+                    }
+
+                    // 打印参数
+                    if (arguments.length > 0) {
+                        LOG("📥 参数:", { c: Color.Blue });
+                        for (var j = 0; j < arguments.length; j++) {
+                            var __t = __getArgType(arguments[j]);
+                            LOG("  arg[" + j + "] (" + __t + "): " + arguments[j], { c: Color.White });
+                        }
+                    }
+
+                    // 调用原始方法或返回自定义值
+                    var retval;
+                    if (hasCustomReturn) {
+                        LOG("🔄 使用自定义返回值: " + customReturnValue, { c: Color.Yellow });
+                        retval = customReturnValue;
+                    } else {
+                        retval = originalCall.apply(this, arguments);
+                    }
+
+                    LOG("📤 返回值: " + retval, { c: Color.Blue });
+                    LOG("🏁 退出 " + fullyQualifiedMethodName + "\n", { c: Color.Green });
+                    return retval;
+                };
+            };
+
             // 当存在多个重载时，逐个设置 implementation；否则直接设置
             if (overloads.length > 0) {
                 LOG("🔀 发现 " + overloads.length + " 个重载，逐个设置Hook...", { c: Color.Blue });
                 for (var i = 0; i < overloads.length; i++) {
                     try {
                         (function(over){
-                            over.implementation = function() {
-                                LOG("\n*** 进入 " + fullyQualifiedMethodName, { c: Color.Green });
-
-                            if (arguments.length > 0) {
-                                LOG("📥 参数:", { c: Color.Blue });
-                                for (var j = 0; j < arguments.length; j++) {
-                                    var __t = __getArgType(arguments[j]);
-                                    LOG("  arg[" + j + "] (" + __t + "): " + arguments[j], { c: Color.White });
-                                }
-                            }
-
-                                // 直接调用该重载的原始实现，避免递归
-                                var retval = over.apply(this, arguments);
-
-                                LOG("📤 返回值: " + retval, { c: Color.Blue });
-                                LOG("🏁 退出 " + fullyQualifiedMethodName + "\n", { c: Color.Green });
-                                return retval;
-                            };
+                            over.implementation = createHookImpl(over);
                         })(overloads[i]);
                     } catch(_) {}
                 }
             } else {
                 // 无 overload 信息时的兜底
-                methodWrapper.implementation = function() {
-                    LOG("\n*** 进入 " + fullyQualifiedMethodName, { c: Color.Green });
-
-                    if (arguments.length > 0) {
-                        LOG("📥 参数:", { c: Color.Blue });
-                        for (var k = 0; k < arguments.length; k++) {
-                            var __t2 = __getArgType(arguments[k]);
-                            LOG("  arg[" + k + "] (" + __t2 + "): " + arguments[k], { c: Color.White });
-                        }
-                    }
-
-                    var retval2 = this[methodName].apply(this, arguments);
-                    LOG("📤 返回值: " + retval2, { c: Color.Blue });
-                    LOG("🏁 退出 " + fullyQualifiedMethodName + "\n", { c: Color.Green });
-                    return retval2;
-                };
+                var origMethod = methodWrapper;
+                methodWrapper.implementation = createHookImpl(function() {
+                    return origMethod.apply(this, arguments);
+                });
             }
 
             LOG("✅ 方法Hook设置成功: " + fullyQualifiedMethodName, { c: Color.Green });
@@ -590,73 +645,14 @@ function traceMethod(fullyQualifiedMethodName) {
     });
 }
 
-// 高级方法追踪 (带堆栈和字段信息)
-function advancedMethodTracing(fullyQualifiedMethodName, enableStackTrace, enableFieldInfo) {
-    enableStackTrace = enableStackTrace || false;
-    enableFieldInfo = enableFieldInfo || false;
-    
-    LOG("🔥 高级追踪: " + fullyQualifiedMethodName, { c: Color.Cyan });
-    
-    var lastDotIndex = fullyQualifiedMethodName.lastIndexOf('.');
-    if (lastDotIndex === -1) {
-        LOG("❌ 方法名格式错误", { c: Color.Red });
-        return;
-    }
-    
-    var className = fullyQualifiedMethodName.substring(0, lastDotIndex);
-    var methodName = fullyQualifiedMethodName.substring(lastDotIndex + 1);
-    
-    Java.perform(function() {
-        try {
-            var targetClass = Java.use(className);
-            
-            targetClass[methodName].implementation = function() {
-                LOG("\n🔥 === 高级追踪开始 ===", { c: Color.Cyan });
-                LOG("🎯 方法: " + fullyQualifiedMethodName, { c: Color.Yellow });
-                
-                // 显示堆栈
-                if (enableStackTrace) {
-                    printStack();
-                }
-                
-                // 显示字段信息
-                if (enableFieldInfo) {
-                    try {
-                        var fields = this.class.getDeclaredFields();
-                        LOG("📋 对象字段:", { c: Color.Blue });
-                        for (var i = 0; i < Math.min(fields.length, 5); i++) {
-                            var field = fields[i];
-                            LOG("  " + field.getName() + ": " + field.getType(), { c: Color.Gray });
-                        }
-                    } catch (e) {
-                        LOG("⚠️ 无法获取字段信息", { c: Color.Yellow });
-                    }
-                }
-                
-                // 参数信息
-                if (arguments.length > 0) {
-                    LOG("📥 参数详情:", { c: Color.Blue });
-                    for (var i = 0; i < arguments.length; i++) {
-                        var arg = arguments[i];
-                        var argType = arg ? arg.getClass().getName() : "null";
-                        LOG("  arg[" + i + "] (" + argType + "): " + arg, { c: Color.White });
-                    }
-                }
-                
-                var retval = this[methodName].apply(this, arguments);
-                
-                LOG("📤 返回值: " + retval, { c: Color.Blue });
-                LOG("🔥 === 高级追踪结束 ===\n", { c: Color.Cyan });
-                
-                return retval;
-            };
-            
-            LOG("✅ 高级追踪已启用", { c: Color.Green });
-            
-        } catch (error) {
-            LOG("❌ 高级追踪失败: " + error.message, { c: Color.Red });
-        }
-    });
+// 向后兼容别名：hookJavaMethodWithTracing -> traceMethod
+function hookJavaMethodWithTracing(methodName, enableStackTrace, customReturnValue) {
+    return traceMethod(methodName, enableStackTrace, 20, customReturnValue, false);
+}
+
+// 向后兼容别名：advancedMethodTracing -> traceMethod
+function advancedMethodTracing(methodName, enableStackTrace, enableFieldInfo) {
+    return traceMethod(methodName, enableStackTrace, 20, undefined, enableFieldInfo);
 }
 
 // 查找类
@@ -723,193 +719,9 @@ function enumAllClasses(packageName) {
     return packageClasses;
 }
 
-// Hook Java方法 (带追踪)
-function hookJavaMethodWithTracing(fullyQualifiedMethodName, enableStackTrace, customReturnValue) {
-    enableStackTrace = enableStackTrace || false;
-    
-    var methodDelimiterIndex = fullyQualifiedMethodName.lastIndexOf(".");
-    if (methodDelimiterIndex === -1) {
-        LOG("❌ 无效的方法名格式: " + fullyQualifiedMethodName + " (应为: 包名.类名.方法名)", { c: Color.Red });
-        return false;
-    }
-
-    var targetClassName = fullyQualifiedMethodName.slice(0, methodDelimiterIndex);
-    var targetMethodName = fullyQualifiedMethodName.slice(methodDelimiterIndex + 1);
-    
-    Java.perform(function() {
-        try {
-            var javaClassHook = null;
-            try {
-                javaClassHook = Java.use(targetClassName);
-            } catch (classLoadError) {
-                if ((classLoadError.message || '').indexOf('ClassNotFoundException') !== -1) {
-                    LOG("❌ 类未在默认ClassLoader中找到，搜索其他ClassLoader...", { c: Color.Yellow });
-                    var customClassLoader = findTragetClassLoader(targetClassName);
-                    if (customClassLoader) {
-                        javaClassHook = Java.ClassFactory.get(customClassLoader).use(targetClassName);
-                        LOG("🎯 成功使用自定义ClassLoader加载类", { c: Color.Green });
-                    } else {
-                        LOG("❌ 在所有ClassLoader中都未找到类: " + targetClassName, { c: Color.Red });
-                        return;
-                    }
-                } else {
-                    LOG("❌ 加载类时发生其他错误: " + classLoadError.message, { c: Color.Red });
-                    return;
-                }
-            }
-
-            if (!javaClassHook || !javaClassHook[targetMethodName]) {
-                LOG("❌ 未找到方法: " + fullyQualifiedMethodName, { c: Color.Red });
-                return;
-            }
-
-            var wrapper = javaClassHook[targetMethodName];
-            var overloads = wrapper.overloads || [];
-
-            if (overloads.length > 0) {
-                LOG("🔀 发现 " + overloads.length + " 个重载，逐个设置Hook...", { c: Color.Blue });
-                for (var i = 0; i < overloads.length; i++) {
-                    try {
-                        (function(over){
-                            over.implementation = function () {
-                                LOG("\n*** 进入 " + fullyQualifiedMethodName, { c: Color.Green });
-
-                                if (enableStackTrace) {
-                                    printStack();
-                                }
-
-                            if (arguments.length > 0) {
-                                LOG("📥 参数:", { c: Color.Blue });
-                                for (var j = 0; j < arguments.length; j++) {
-                                    var __t = __getArgType(arguments[j]);
-                                    LOG("  arg[" + j + "] (" + __t + "): " + arguments[j], { c: Color.White });
-                                }
-                            }
-
-                                var result;
-                                if (customReturnValue !== undefined) {
-                                    LOG("🔄 使用自定义返回值: " + customReturnValue, { c: Color.Yellow });
-                                    result = customReturnValue;
-                                } else {
-                                    // 调用该重载的原始实现
-                                    result = over.apply(this, arguments);
-                                }
-
-                                LOG("📤 返回值: " + result, { c: Color.Blue });
-                                LOG("🏁 退出 " + fullyQualifiedMethodName + "\n", { c: Color.Green });
-
-                                return result;
-                            };
-                        })(overloads[i]);
-                    } catch(_) {}
-                }
-            } else {
-                // 兜底：无 overloads 信息时直接设置
-                wrapper.implementation = function () {
-                    LOG("\n*** 进入 " + fullyQualifiedMethodName, { c: Color.Green });
-
-                    if (enableStackTrace) {
-                        printStack();
-                    }
-
-                    if (arguments.length > 0) {
-                        LOG("📥 参数:", { c: Color.Blue });
-                        for (var k = 0; k < arguments.length; k++) {
-                            LOG("  arg[" + k + "]: " + arguments[k], { c: Color.White });
-                        }
-                    }
-
-                    var result2;
-                    if (customReturnValue !== undefined) {
-                        LOG("🔄 使用自定义返回值: " + customReturnValue, { c: Color.Yellow });
-                        result2 = customReturnValue;
-                    } else {
-                        result2 = this[targetMethodName].apply(this, arguments);
-                    }
-
-                    LOG("📤 返回值: " + result2, { c: Color.Blue });
-                    LOG("🏁 退出 " + fullyQualifiedMethodName + "\n", { c: Color.Green });
-
-                    return result2;
-                };
-            }
-
-            LOG("✅ 方法Hook设置成功: " + fullyQualifiedMethodName, { c: Color.Green });
-
-        } catch (hookError) {
-            LOG("❌ Hook设置失败: " + hookError.message, { c: Color.Red });
-        }
-    });
-}
-
-// Hook类的所有方法
-function hookAllMethodsInJavaClass(fullyQualifiedClassName) {
-    Java.perform(function() {
-        try {
-            var targetClass = null;
-            
-            try {
-                targetClass = Java.use(fullyQualifiedClassName);
-            } catch (error) {
-                if (error.message.includes("ClassNotFoundException")) {
-                    LOG("❌ 类未在默认ClassLoader中找到，搜索其他ClassLoader...", { c: Color.Yellow });
-                    var foundLoader = findTragetClassLoader(fullyQualifiedClassName);
-                    if (foundLoader) {
-                        targetClass = Java.ClassFactory.get(foundLoader).use(fullyQualifiedClassName);
-                        LOG("🎯 成功使用自定义ClassLoader加载类", { c: Color.Green });
-                    } else {
-                        LOG("❌ 在所有ClassLoader中都未找到类: " + fullyQualifiedClassName, { c: Color.Red });
-                        return;
-                    }
-                } else {
-                    throw error;
-                }
-            }
-
-            var methods = targetClass.class.getDeclaredMethods();
-            var hookedCount = 0;
-
-            methods.forEach(function(method) {
-                try {
-                    var methodName = method.getName();
-                    
-                    if (methodName.includes("$") || methodName.includes("<")) {
-                        return;
-                    }
-                    
-                    var originalImpl = targetClass[methodName];
-                    if (originalImpl) {
-                        targetClass[methodName].implementation = function() {
-                            var fullMethodName = fullyQualifiedClassName + "." + methodName;
-                            LOG("\n*** 进入 " + fullMethodName, { c: Color.Green });
-                            
-                            if (arguments.length > 0) {
-                                LOG("📥 参数:", { c: Color.Blue });
-                                for (var i = 0; i < arguments.length; i++) {
-                                    LOG("  arg[" + i + "]: " + arguments[i], { c: Color.White });
-                                }
-                            }
-                            
-                            var retval = originalImpl.apply(this, arguments);
-                            
-                            LOG("📤 返回值: " + retval, { c: Color.Blue });
-                            LOG("🏁 退出 " + fullMethodName + "\n", { c: Color.Green });
-                            
-                            return retval;
-                        };
-                        hookedCount++;
-                    }
-                } catch (e) {
-                    // 忽略无法Hook的方法
-                }
-            });
-
-            LOG("✅ 类Hook设置成功: " + hookedCount + " 个方法", { c: Color.Green });
-
-        } catch (error) {
-            LOG("❌ 类Hook设置失败: " + error.message, { c: Color.Red });
-        }
-    });
+// 向后兼容别名：hookAllMethodsInJavaClass -> traceClass（不带调用栈）
+function hookAllMethodsInJavaClass(className) {
+    return traceClass(className, false, 20);
 }
 
 // HashMap特定值查找Hook
@@ -1791,9 +1603,12 @@ function help() {
     // 核心追踪功能
     LOG("\n🎯 核心追踪功能", { c: Color.Yellow });
     var traceCommands = [
-        ["traceClass(className)", "跟踪类的所有方法调用"],
-        ["traceMethod(className.method)", "跟踪特定方法调用"],
-        ["advancedMethodTracing(method, stack, field)", "高级方法追踪（支持调用栈和字段检查）"]
+        ["traceClass(className, showStack, stackLines)", "跟踪类的所有方法 (showStack: 1=显示调用栈)"],
+        ["traceMethod(method, showStack, lines, retVal, fieldInfo)", "跟踪方法 (完整版本，支持所有功能)"],
+        ["  示例: traceMethod('com.a.B.m', 1)", "显示调用栈"],
+        ["  示例: traceMethod('com.a.B.m', 1, 30)", "显示30行调用栈"],
+        ["  示例: traceMethod('com.a.B.m', 0, 0, true)", "修改返回值为true"],
+        ["  示例: traceMethod('com.a.B.m', 1, 20, null, 1)", "显示调用栈+字段信息"]
     ];
     traceCommands.forEach(function(cmd) {
         LOG("  🔧 " + cmd[0], { c: Color.Green });
