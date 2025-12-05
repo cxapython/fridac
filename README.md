@@ -97,6 +97,17 @@ python3 fridac
 | `tracemethod <method>` | 追踪特定方法 |
 | `findClasses('pattern')` | 查找匹配的类 |
 
+### 接口/继承查找
+
+| 命令 | 说明 |
+|------|------|
+| `findImplementations('接口名', '包过滤')` | 查找接口的所有实现类 |
+| `findDirectImplementations('接口名')` | 查找直接实现接口的类 |
+| `findSubclasses('父类名', '包过滤')` | 查找所有子类 |
+| `analyzeClassHierarchy('类名')` | 分析类的继承层次结构 |
+
+> 💡 所有接口查找函数都支持多 ClassLoader，自动遍历其他 dex 查找类
+
 ### 定位 Hook
 
 | 命令 | 说明 |

@@ -41,6 +41,12 @@ class FridacCompleter:
             'enumAllClasses': ('📋 枚举包下所有类', "enumAllClasses('com.example')"),
             'describeJavaClass': ('📖 描述Java类详细信息', "describeJavaClass('java.lang.String')"),
             
+            # ===== 接口/继承查找 =====
+            'findImplementations': ('🔌 查找接口实现类', "findImplementations('com.a.animal.Dog', 'com.a')"),
+            'findDirectImplementations': ('🎯 查找直接实现类', "findDirectImplementations('com.a.animal.Dog')"),
+            'findSubclasses': ('📂 查找子类', "findSubclasses('android.app.Activity', 'com.example')"),
+            'analyzeClassHierarchy': ('🌳 分析类继承层次', "analyzeClassHierarchy('com.example.MyClass')"),
+            
             # ===== 类/对象搜索 =====
             'classsearch': ('🔍 搜索类（支持正则/pattern/）', "classsearch('MainActivity')"),
             'objectsearch': ('🧩 搜索对象实例', "objectsearch('com.example.MainActivity', 20)"),

@@ -719,6 +719,328 @@ function enumAllClasses(packageName) {
     return packageClasses;
 }
 
+// ===== 接口实现类查找工具 =====
+
+/**
+ * 辅助函数：在多个 ClassLoader 中尝试加载类
+ * @param {string} className - 类名
+ * @returns {object|null} - { wrapper: Java.use结果, clazz: class对象, loader: 使用的ClassLoader }
+ */
+function __tryLoadClass(className) {
+    try {
+        // 先尝试默认 ClassLoader
+        try {
+            var wrapper = Java.use(className);
+            return { wrapper: wrapper, clazz: wrapper.class, loader: null };
+        } catch (e) {
+            if ((e.message || '').indexOf('ClassNotFoundException') === -1) {
+                return null;
+            }
+        }
+        
+        // 回退到其他 ClassLoader
+        if (typeof findTragetClassLoader === 'function') {
+            var loader = findTragetClassLoader(className);
+            if (loader) {
+                try {
+                    var wrapper = Java.ClassFactory.get(loader).use(className);
+                    return { wrapper: wrapper, clazz: wrapper.class, loader: loader };
+                } catch (_) {}
+            }
+        }
+        return null;
+    } catch (_) {
+        return null;
+    }
+}
+
+/**
+ * 查找实现指定接口的所有类
+ * 支持多 ClassLoader 查找，与 traceMethod 行为一致
+ * @param {string} interfaceName - 接口的完整类名
+ * @param {string} packageFilter - 可选，只在此包下搜索，提高效率
+ */
+function findImplementations(interfaceName, packageFilter) {
+    var implementations = [];
+    
+    LOG("🔍 查找接口实现类: " + interfaceName, { c: Color.Cyan });
+    if (packageFilter) {
+        LOG("📦 限定包范围: " + packageFilter, { c: Color.Gray });
+    }
+    
+    Java.perform(function() {
+        // 加载目标接口（支持多 ClassLoader）
+        var targetInfo = __tryLoadClass(interfaceName);
+        if (!targetInfo) {
+            LOG("❌ 无法加载接口: " + interfaceName, { c: Color.Red });
+            LOG("💡 提示: 确保目标应用已加载该接口所在的类", { c: Color.Yellow });
+            return;
+        }
+        
+        var targetInterface = targetInfo.clazz;
+        if (targetInfo.loader) {
+            LOG("🔗 使用自定义ClassLoader加载目标接口", { c: Color.Yellow });
+        }
+        
+        // 检查是否是接口或类
+        var isInterface = false;
+        try { isInterface = targetInterface.isInterface(); } catch (_) {}
+        LOG("📋 目标类型: " + (isInterface ? "接口 (interface)" : "类 (class)"), { c: Color.Blue });
+        
+        // 枚举所有已加载的类
+        var loadedClasses = [];
+        try { loadedClasses = Java.enumerateLoadedClassesSync(); } catch (_) {}
+        LOG("📊 正在扫描 " + loadedClasses.length + " 个类...", { c: Color.Gray });
+        
+        for (var i = 0; i < loadedClasses.length; i++) {
+            var className = loadedClasses[i];
+            
+            // 包过滤
+            if (packageFilter && className.indexOf(packageFilter) !== 0) {
+                continue;
+            }
+            
+            // 跳过目标接口自身
+            if (className === interfaceName) {
+                continue;
+            }
+            
+            // 尝试在多个 ClassLoader 中加载类
+            var classInfo = __tryLoadClass(className);
+            if (!classInfo) continue;
+            
+            try {
+                var clazz = classInfo.clazz;
+                
+                // 检查是否实现/继承了目标接口/类
+                if (targetInterface.isAssignableFrom(clazz)) {
+                    // 获取额外信息
+                    var extraInfo = "";
+                    try {
+                        if (clazz.isInterface()) {
+                            extraInfo = " (子接口)";
+                        } else if (clazz.getSuperclass() && 
+                                   clazz.getSuperclass().getName() === interfaceName) {
+                            extraInfo = " (直接继承)";
+                        } else {
+                            // 检查是否直接实现
+                            var interfaces = clazz.getInterfaces();
+                            for (var j = 0; j < interfaces.length; j++) {
+                                if (interfaces[j].getName() === interfaceName) {
+                                    extraInfo = " (直接实现)";
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (_) {}
+                    
+                    implementations.push(className);
+                    LOG("✅ " + className + extraInfo, { c: Color.Green });
+                }
+            } catch (_) {}
+        }
+        
+        LOG("", { c: Color.Reset });
+        LOG("📊 找到 " + implementations.length + " 个实现类", { c: Color.Cyan });
+    });
+    
+    return implementations;
+}
+
+/**
+ * 查找直接实现指定接口的类（不包含间接继承）
+ * @param {string} interfaceName - 接口的完整类名
+ * @param {string} packageFilter - 可选，只在此包下搜索
+ */
+function findDirectImplementations(interfaceName, packageFilter) {
+    var directImpls = [];
+    
+    LOG("🔍 查找直接实现类: " + interfaceName, { c: Color.Cyan });
+    
+    Java.perform(function() {
+        var targetInfo = __tryLoadClass(interfaceName);
+        if (!targetInfo) {
+            LOG("❌ 无法加载接口: " + interfaceName, { c: Color.Red });
+            return;
+        }
+        
+        if (targetInfo.loader) {
+            LOG("🔗 使用自定义ClassLoader加载目标接口", { c: Color.Yellow });
+        }
+        
+        var loadedClasses = [];
+        try { loadedClasses = Java.enumerateLoadedClassesSync(); } catch (_) {}
+        
+        for (var i = 0; i < loadedClasses.length; i++) {
+            var className = loadedClasses[i];
+            
+            if (packageFilter && className.indexOf(packageFilter) !== 0) continue;
+            if (className === interfaceName) continue;
+            
+            var classInfo = __tryLoadClass(className);
+            if (!classInfo) continue;
+            
+            try {
+                var clazz = classInfo.clazz;
+                var interfaces = clazz.getInterfaces();
+                
+                for (var j = 0; j < interfaces.length; j++) {
+                    if (interfaces[j].getName() === interfaceName) {
+                        directImpls.push(className);
+                        LOG("✅ " + className, { c: Color.Green });
+                        break;
+                    }
+                }
+            } catch (_) {}
+        }
+        
+        LOG("📊 找到 " + directImpls.length + " 个直接实现类", { c: Color.Cyan });
+    });
+    
+    return directImpls;
+}
+
+/**
+ * 查找某个类的所有子类
+ * @param {string} parentClassName - 父类的完整类名
+ * @param {string} packageFilter - 可选，只在此包下搜索
+ */
+function findSubclasses(parentClassName, packageFilter) {
+    var subclasses = [];
+    
+    LOG("🔍 查找子类: " + parentClassName, { c: Color.Cyan });
+    
+    Java.perform(function() {
+        var parentInfo = __tryLoadClass(parentClassName);
+        if (!parentInfo) {
+            LOG("❌ 无法加载父类: " + parentClassName, { c: Color.Red });
+            return;
+        }
+        
+        var parentClass = parentInfo.clazz;
+        if (parentInfo.loader) {
+            LOG("🔗 使用自定义ClassLoader加载父类", { c: Color.Yellow });
+        }
+        
+        var loadedClasses = [];
+        try { loadedClasses = Java.enumerateLoadedClassesSync(); } catch (_) {}
+        
+        for (var i = 0; i < loadedClasses.length; i++) {
+            var className = loadedClasses[i];
+            
+            if (packageFilter && className.indexOf(packageFilter) !== 0) continue;
+            if (className === parentClassName) continue;
+            
+            var classInfo = __tryLoadClass(className);
+            if (!classInfo) continue;
+            
+            try {
+                var clazz = classInfo.clazz;
+                
+                // 检查是否是子类（排除接口）
+                if (!clazz.isInterface() && parentClass.isAssignableFrom(clazz)) {
+                    // 判断是直接子类还是间接子类
+                    var isDirect = false;
+                    try {
+                        var superClass = clazz.getSuperclass();
+                        if (superClass && superClass.getName() === parentClassName) {
+                            isDirect = true;
+                        }
+                    } catch (_) {}
+                    
+                    subclasses.push(className);
+                    LOG("✅ " + className + (isDirect ? " (直接子类)" : ""), { c: Color.Green });
+                }
+            } catch (_) {}
+        }
+        
+        LOG("📊 找到 " + subclasses.length + " 个子类", { c: Color.Cyan });
+    });
+    
+    return subclasses;
+}
+
+/**
+ * 分析类的继承层次结构
+ * 显示类的完整继承链和实现的所有接口
+ * @param {string} className - 要分析的类名
+ */
+function analyzeClassHierarchy(className) {
+    LOG("📊 分析类层次结构: " + className, { c: Color.Cyan });
+    
+    Java.perform(function() {
+        var classInfo = __tryLoadClass(className);
+        if (!classInfo) {
+            LOG("❌ 无法加载类: " + className, { c: Color.Red });
+            return;
+        }
+        
+        var clazz = classInfo.clazz;
+        if (classInfo.loader) {
+            LOG("🔗 使用自定义ClassLoader加载", { c: Color.Yellow });
+        }
+        
+        // 显示继承链
+        LOG("", { c: Color.Reset });
+        LOG("🔗 继承链:", { c: Color.Blue });
+        var current = clazz;
+        var level = 0;
+        while (current) {
+            var prefix = "";
+            for (var i = 0; i < level; i++) prefix += "  ";
+            
+            var typeName = current.getName();
+            var typeKind = current.isInterface() ? "(接口)" : "(类)";
+            
+            if (level === 0) {
+                LOG(prefix + "📦 " + typeName + " " + typeKind, { c: Color.Cyan });
+            } else {
+                LOG(prefix + "└─ " + typeName + " " + typeKind, { c: Color.White });
+            }
+            
+            try { current = current.getSuperclass(); } catch (_) { current = null; }
+            level++;
+        }
+        
+        // 显示实现的接口
+        LOG("", { c: Color.Reset });
+        LOG("🔌 实现的接口:", { c: Color.Blue });
+        
+        var allInterfaces = [];
+        try {
+            var interfaceSet = {};
+            var currentClass = clazz;
+            while (currentClass) {
+                var interfaces = currentClass.getInterfaces();
+                for (var j = 0; j < interfaces.length; j++) {
+                    var ifaceName = interfaces[j].getName();
+                    if (!interfaceSet[ifaceName]) {
+                        interfaceSet[ifaceName] = true;
+                        allInterfaces.push({
+                            name: ifaceName,
+                            declaredIn: currentClass.getName()
+                        });
+                    }
+                }
+                currentClass = currentClass.getSuperclass();
+            }
+        } catch (_) {}
+        
+        if (allInterfaces.length === 0) {
+            LOG("  (无)", { c: Color.Gray });
+        } else {
+            for (var k = 0; k < allInterfaces.length; k++) {
+                var iface = allInterfaces[k];
+                var note = (iface.declaredIn === className) ? "" : " (来自 " + iface.declaredIn + ")";
+                LOG("  🔹 " + iface.name + note, { c: Color.Green });
+            }
+        }
+        
+        LOG("", { c: Color.Reset });
+        LOG("📊 统计: 继承深度 " + level + " 层, 实现 " + allInterfaces.length + " 个接口", { c: Color.Cyan });
+    });
+}
+
 // 向后兼容别名：hookAllMethodsInJavaClass -> traceClass（不带调用栈）
 function hookAllMethodsInJavaClass(className) {
     return traceClass(className, false, 20);
@@ -1815,6 +2137,11 @@ global.advancedMethodTracing = advancedMethodTracing;
 global.findClasses = findClasses;
 global.enumAllClasses = enumAllClasses;
 global.describeJavaClass = describeJavaClass;
+// 接口实现类查找
+global.findImplementations = findImplementations;
+global.findDirectImplementations = findDirectImplementations;
+global.findSubclasses = findSubclasses;
+global.analyzeClassHierarchy = analyzeClassHierarchy;
 global.hookJavaMethodWithTracing = hookJavaMethodWithTracing;
 global.hookAllMethodsInJavaClass = hookAllMethodsInJavaClass;
 global.hookHashMapToFindValue = hookHashMapToFindValue;
