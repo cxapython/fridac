@@ -23,31 +23,26 @@ class FridacCompleter:
     def __init__(self):
         # Available functions for completion with descriptions and examples
         self.functions = {
-            # Java Hook 函数
-            'traceClass': ('🏛️  跟踪类的所有方法', "traceClass('com.example.MainActivity')"),
-            'hookAllMethodsInJavaClass': ('🏛️  跟踪类的所有方法（新函数名）', "hookAllMethodsInJavaClass('com.example.MainActivity')"),
-            'traceMethod': ('🎯 跟踪特定方法', "traceMethod('com.example.Class.method', true)"),
-            'hookJavaMethodWithTracing': ('🎯 跟踪特定方法（新函数名）', "hookJavaMethodWithTracing('com.example.Class.method', true)"),
+            # ===== Java Hook 核心函数 =====
+            'traceClass': ('🏛️ 跟踪类的所有方法', "traceClass('com.example.MainActivity')"),
+            'traceMethod': ('🎯 跟踪特定方法', "traceMethod('com.example.Class.method')"),
+            'advancedMethodTracing': ('🔥 高级方法追踪（带堆栈和字段）', "advancedMethodTracing('com.example.Class.method', true, true)"),
             'findClasses': ('🔍 查找匹配的类', "findClasses('MainActivity', true)"),
-            'enumAllClasses': ('📋 枚举所有已加载的类', "enumAllClasses('com.example')"),
-            'describeJavaClass': ('📖 描述Java类的详细信息', "describeJavaClass('java.lang.String')"),
-            'classsearch': ('🔍 搜索类（支持字符串/正则 /pattern/）', "classsearch('MainActivity')"),
-            'objectsearch': ('🧩 搜索实例对象，返回可引用句柄', "objectsearch('com.example.MainActivity', 20)"),
-            'classdump': ('📘 输出类结构（--fullname 等效为 true）', "classdump('com.example.MainActivity', true)"),
-            'objectdump': ('📦 输出对象字段值（传 objectsearch 返回的句柄）', "objectdump('123456789', true)"),
-            # 'printStack': ('📚 打印Java调用栈', "printStack()"),
-            'findTragetClassLoader': ('🔗 查找目标类加载器', "findTragetClassLoader('com.example.Class')"),
-            'printJavaCallStack': ('📚 打印Java调用栈（新函数名）', "printJavaCallStack(true, 50)"),
-            'findStrInMap': ('🗺️ 监控HashMap查找key对应value', "findStrInMap('password', 1)"),
+            'enumAllClasses': ('📋 枚举包下所有类', "enumAllClasses('com.example')"),
+            'describeJavaClass': ('📖 描述Java类详细信息', "describeJavaClass('java.lang.String')"),
             
-            # 高级追踪功能（基于 r0tracer）
-            'bypassTracerPidDetection': ('🔒 绕过TracerPid检测', "bypassTracerPidDetection()"),
-            'inspectObjectFields': ('🔍 检查对象字段详情', "inspectObjectFields(this, '上下文信息')"),
-            'advancedMethodTracing': ('🎯 高级方法追踪', "advancedMethodTracing('com.example.Class.method', true, true)"),
-            'batchHookWithFilters': ('📦 批量Hook（黑白名单）', "batchHookWithFilters('com.example', 'test', null)"),
-            'hookAllApplicationClasses': ('🚀 Hook所有应用类', "hookAllApplicationClasses(true)"),
+            # ===== Wallbreaker风格搜索 =====
+            'classsearch': ('🔍 搜索类（支持正则/pattern/）', "classsearch('MainActivity')"),
+            'objectsearch': ('🧩 搜索对象实例', "objectsearch('com.example.MainActivity', 20)"),
+            'classdump': ('📘 输出类结构', "classdump('com.example.MainActivity', true)"),
+            'objectdump': ('📦 输出对象字段值', "objectdump('123456789', true)"),
             
-            # 任务管理（新系统）
+            # ===== 工具函数 =====
+            'printStack': ('📚 打印Java调用栈', "printStack()"),
+            'findTragetClassLoader': ('🔗 查找目标ClassLoader', "findTragetClassLoader('com.example.Class')"),
+            'findStrInMap': ('🗺️ 监控HashMap查找key', "findStrInMap('password', 1)"),
+            
+            # ===== 任务管理系统 =====
             'jobs': ('📋 显示所有任务', "jobs"),
             'tasks': ('📋 显示所有任务', "tasks"),
             'kill': ('❌ 终止指定任务', "kill 1"),
@@ -83,29 +78,30 @@ class FridacCompleter:
             'selftest': ('🧪 系统自测', "selftest"),
             'reload_scripts': ('🔄 重载自定义脚本', "reload_scripts"),
             
-            # Native Hook 函数
-            'nativeHookNativeFunction': ('🔧 Hook Native 函数', "nativeHookNativeFunction('malloc', {argTypes: ['int']})"),
-            'nativeFindModules': ('📦 查找加载的模块', "nativeFindModules(/libc/)"),
-            'nativeFindExports': ('📤 查找模块导出函数', "nativeFindExports('libc.so', /malloc/)"),
-            'nativeFindImports': ('📥 查找模块导入函数', "nativeFindImports('app', /strcpy/)"),
-            'nativeSearchMemory': ('🔍 搜索内存模式', "nativeSearchMemory('48 89 e5')"),
+            # ===== Native Hook 函数 =====
+            'nativeFindModules': ('📦 查找已加载模块', "nativeFindModules(/libc/)"),
+            'nativeFindExports': ('📤 查找导出函数', "nativeFindExports('libc.so', /malloc/)"),
+            'nativeFindImports': ('📥 查找导入函数', "nativeFindImports('app', /strcpy/)"),
+            'nativeAnalyzeSO': ('🔍 分析SO文件', "nativeAnalyzeSO('libtest.so', 1, 1)"),
             'printNativeStack': ('📚 打印Native调用栈', "printNativeStack()"),
             
-            # 高级Native Hook
+            # ===== Native Hook 高级 =====
             'nativeHookDlopenFamily': ('📚 Hook动态库加载', "nativeHookDlopenFamily(1)"),
-            'nativeHookJNIFunctions': ('☕ Hook JNI函数', "nativeHookJNIFunctions(1)"),
-            'nativeHookCryptoFunctions': ('🔐 Hook加密算法', "nativeHookCryptoFunctions('aes', 1)"),
+            'nativeHookCryptoFunctions': ('🔐 Hook加密算法', "nativeHookCryptoFunctions('all', 1)"),
             'nativeHookNetworkFunctions': ('🌐 Hook网络函数', "nativeHookNetworkFunctions(1)"),
-            'nativeHookAntiDebug': ('🛡️ Hook反调试检测', "nativeHookAntiDebug(1)"),
-            'nativeAnalyzeSO': ('🔍 分析SO文件', "nativeAnalyzeSO('libtest.so', 1, 1)"),
-            'nativeEnableAllHooks': ('🚀 启用所有Native Hook', "nativeEnableAllHooks(1)"),
-            'nativeQuickHookCrypto': ('⚡ 快速Hook加密', "nativeQuickHookCrypto('md5')"),
-            'nativeQuickHookNetwork': ('⚡ 快速Hook网络', "nativeQuickHookNetwork()"),
-            'nativeQuickAnalyzeApp': ('⚡ 快速分析应用', "nativeQuickAnalyzeApp()"),
+            'nativeHookTLSFunctions': ('🔐 Hook TLS明文', "nativeHookTLSFunctions(1)"),
+            'nativeHookFileIOFunctions': ('📁 Hook文件IO', "nativeHookFileIOFunctions(1)"),
+            'nativeEnableAntiDebugBypass': ('🛡️ 反调试绕过', "nativeEnableAntiDebugBypass({})"),
+            'nativeEnableArmSuite': ('🚀 启用ARM套件(全功能)', "nativeEnableArmSuite({showStack: true})"),
             
-            # 智能工具
-            'intelligentHookDispatcher': ('🎯 智能识别并Hook目标', "intelligentHookDispatcher('com.example.MainActivity', {enableStackTrace: true})"),
-            'loadNativeSupport': ('🔧 加载Native Hook工具', "loadNativeSupport()"),
+            # ===== 网络抓包 =====
+            'fetch': ('🌐 网络抓包(生成Python代码)', "fetch('keyword')"),
+            'okhttpStart': ('🌐 OkHttp抓包(一键启动)', "okhttpStart()"),
+            'okhttpHistory': ('📋 OkHttp请求历史', "okhttpHistory()"),
+            'okhttpResend': ('🔄 重放OkHttp请求', "okhttpResend(1)"),
+            
+            # ===== 智能工具 =====
+            'intelligentHookDispatcher': ('🎯 智能Hook目标', "intelligentHookDispatcher('com.example.MainActivity', {})"),
             
             'help': ('❓ 显示帮助信息', "help()"),
             'q': ('🚪 退出程序', "q"),

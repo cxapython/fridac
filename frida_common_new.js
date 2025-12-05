@@ -1785,36 +1785,103 @@ function okhttpClear() { try { __okhttp_state.history = []; __okhttp_state.count
 
 // ===== 帮助函数 =====
 function help() {
-    LOG("\n📚 fridacli Hook工具帮助 (新版本)", { c: Color.Cyan });
-    LOG("=" + "=".repeat(50), { c: Color.Gray });
+    LOG("\n📚 fridacli Hook工具帮助", { c: Color.Cyan });
+    LOG("=" + "=".repeat(55), { c: Color.Gray });
     
-    var commands = [
-        ["traceClass(className)", "跟踪类的所有方法"],
-        ["traceMethod(className.method)", "跟踪特定方法"],
-        ["advancedMethodTracing(method, stack, field)", "高级方法追踪"],
-        ["findClasses(pattern, details)", "查找匹配的类"],
-        ["enumAllClasses(package)", "枚举包下所有类"],
-        ["hookbase64", "创建Base64 Hook任务"],
-        ["hookurl", "创建URL Hook任务"],
-        ["hooktoast", "创建Toast Hook任务"],
-        ["fetch([filter])", "抓取网络请求，生成等价Python requests代码并保存日志，可选按字符串过滤"],
-        ["okhttpFind()", "检测是否使用OkHttp (2/3)"],
-        ["okhttpSwitchLoader('<okhttp3.OkHttpClient>')", "切换使用的ClassLoader"],
-        ["okhttpHold()", "开启OkHttp拦截(hold)"],
-        ["okhttpHistory()", "打印可重放的请求列表"],
-        ["okhttpResend(index)", "按编号重放请求(同步执行)"],
-        ["okhttpClear()", "清空历史记录"],
-        ["help()", "显示此帮助"]
+    // 核心追踪功能
+    LOG("\n🎯 核心追踪功能", { c: Color.Yellow });
+    var traceCommands = [
+        ["traceClass(className)", "跟踪类的所有方法调用"],
+        ["traceMethod(className.method)", "跟踪特定方法调用"],
+        ["advancedMethodTracing(method, stack, field)", "高级方法追踪（支持调用栈和字段检查）"]
     ];
-    
-    commands.forEach(function(cmd) {
-        LOG("🔧 " + cmd[0], { c: Color.Green });
-        LOG("   " + cmd[1], { c: Color.White });
+    traceCommands.forEach(function(cmd) {
+        LOG("  🔧 " + cmd[0], { c: Color.Green });
+        LOG("     " + cmd[1], { c: Color.White });
     });
     
-    LOG("\n💡 提示: 新版本使用基于Script隔离的任务管理系统", { c: Color.Yellow });
-    LOG("🎯 任务管理命令: tasks, killall, taskinfo, hookmethod, hookbase64等", { c: Color.Blue });
-    LOG("=" + "=".repeat(50), { c: Color.Gray });
+    // 类和对象搜索
+    LOG("\n🔍 类和对象搜索", { c: Color.Yellow });
+    var searchCommands = [
+        ["findClasses(pattern, details)", "搜索匹配的类名（支持正则）"],
+        ["enumAllClasses(package)", "枚举指定包下所有类"],
+        ["classsearch(keyword)", "关键字搜索已加载的类"],
+        ["objectsearch(className)", "搜索类的实例对象"]
+    ];
+    searchCommands.forEach(function(cmd) {
+        LOG("  🔧 " + cmd[0], { c: Color.Green });
+        LOG("     " + cmd[1], { c: Color.White });
+    });
+    
+    // 对象分析工具
+    LOG("\n📊 对象分析工具", { c: Color.Yellow });
+    var analyzeCommands = [
+        ["classdump(className)", "导出类的方法和字段信息"],
+        ["objectdump(className)", "导出对象实例的字段值"],
+        ["printJavaCallStack()", "打印当前Java调用栈"]
+    ];
+    analyzeCommands.forEach(function(cmd) {
+        LOG("  🔧 " + cmd[0], { c: Color.Green });
+        LOG("     " + cmd[1], { c: Color.White });
+    });
+    
+    // 网络抓取
+    LOG("\n🌐 网络抓取", { c: Color.Yellow });
+    var networkCommands = [
+        ["fetch([filter])", "抓取网络请求，生成Python代码并保存日志"],
+        ["okhttpStart([filter])", "一键启动OkHttp日志（推荐）"],
+        ["okhttpFind()", "检测是否使用OkHttp 2/3"],
+        ["okhttpHold()", "开启OkHttp拦截"],
+        ["okhttpHistory()", "查看可重放的请求列表"],
+        ["okhttpResend(index)", "按编号重放请求"],
+        ["okhttpClear()", "清空历史记录"]
+    ];
+    networkCommands.forEach(function(cmd) {
+        LOG("  🔧 " + cmd[0], { c: Color.Green });
+        LOG("     " + cmd[1], { c: Color.White });
+    });
+    
+    // 任务管理命令（在session中使用）
+    LOG("\n📋 任务管理命令（交互式Shell）", { c: Color.Yellow });
+    var taskCommands = [
+        ["tasks", "列出所有运行中的任务"],
+        ["kill <id>", "终止指定任务"],
+        ["killall", "终止所有任务"],
+        ["taskinfo <id>", "查看任务详情"],
+        ["hookmethod <method>", "创建方法Hook任务"],
+        ["hookclass <class>", "创建类Hook任务"],
+        ["hookbase64", "创建Base64 Hook任务"],
+        ["hooktoast", "创建Toast Hook任务"],
+        ["hookurl", "创建URL Hook任务"],
+        ["hookhashmap", "创建HashMap Hook任务"],
+        ["hookjson", "创建JSON Hook任务"],
+        ["hookfile", "创建文件操作Hook任务"],
+        ["hookedittext", "创建EditText Hook任务"]
+    ];
+    taskCommands.forEach(function(cmd) {
+        LOG("  📌 " + cmd[0], { c: Color.Cyan });
+        LOG("     " + cmd[1], { c: Color.White });
+    });
+    
+    // Native Hook（如果可用）
+    LOG("\n⚙️  Native Hook（需加载frida_native_common.js）", { c: Color.Yellow });
+    var nativeCommands = [
+        ["nativeEnableAllHooks()", "启用所有Native Hook"],
+        ["nativeHookDlopen()", "Hook dlopen/dlsym"],
+        ["nativeHookCrypto()", "Hook OpenSSL加密函数"],
+        ["nativeHookNetwork()", "Hook网络相关函数"],
+        ["nativeHookFile()", "Hook文件操作函数"]
+    ];
+    nativeCommands.forEach(function(cmd) {
+        LOG("  🔧 " + cmd[0], { c: Color.Gray });
+        LOG("     " + cmd[1], { c: Color.Gray });
+    });
+    
+    LOG("\n💡 提示:", { c: Color.Yellow });
+    LOG("  • 使用 tasks 命令查看所有运行中的Hook任务", { c: Color.White });
+    LOG("  • 使用 killall 可以一键清理所有任务", { c: Color.White });
+    LOG("  • 自定义脚本放入 scripts/ 目录自动加载", { c: Color.White });
+    LOG("=" + "=".repeat(55), { c: Color.Gray });
 }
 
 /**
@@ -1951,14 +2018,43 @@ global.classsearch = classsearch;
 global.objectsearch = objectsearch;
 global.classdump = classdump;
 global.objectdump = objectdump;
-// OkHttp Logger 导出（插件提供时可用）
-if (typeof okhttpFind !== 'undefined') global.okhttpFind = okhttpFind;
-if (typeof okhttpSwitchLoader !== 'undefined') global.okhttpSwitchLoader = okhttpSwitchLoader;
-if (typeof okhttpHold !== 'undefined') global.okhttpHold = okhttpHold;
-if (typeof okhttpHistory !== 'undefined') global.okhttpHistory = okhttpHistory;
-if (typeof okhttpResend !== 'undefined') global.okhttpResend = okhttpResend;
-if (typeof okhttpClear !== 'undefined') global.okhttpClear = okhttpClear;
-if (typeof okhttpStart !== 'undefined') global.okhttpStart = okhttpStart;
+// OkHttp Logger 导出（已内置）
+global.okhttpFind = okhttpFind;
+global.okhttpSwitchLoader = okhttpSwitchLoader;
+global.okhttpHold = okhttpHold;
+global.okhttpHistory = okhttpHistory;
+global.okhttpResend = okhttpResend;
+global.okhttpClear = okhttpClear;
+// okhttpStart 函数（一键启动）
+function okhttpStart(arg) {
+    try {
+        var filter = null;
+        var loaderSample = null;
+        if (typeof arg === 'string') {
+            filter = arg;
+        } else if (arg && typeof arg === 'object') {
+            filter = arg.filter || null;
+            loaderSample = arg.loaderSample || arg.sample || null;
+        }
+        // 可选切换ClassLoader
+        if (loaderSample) {
+            try { okhttpSwitchLoader(loaderSample); } catch(_){}
+        }
+        // 检测并开启
+        try { okhttpFind(); } catch(_){}
+        var ok = okhttpHold();
+        if (ok) {
+            LOG('✅ OkHttp Logger 已启动' + (filter ? (' (过滤: ' + filter + ')') : ''), { c: Color.Green });
+        } else {
+            LOG('⚠️ OkHttp Logger 启动失败，未检测到 RealCall', { c: Color.Yellow });
+        }
+        return ok;
+    } catch (e) {
+        LOG('❌ okhttpStart 失败: ' + e.message, { c: Color.Red });
+        return false;
+    }
+}
+global.okhttpStart = okhttpStart;
 
 // 提供 loadNativeSupport 便捷函数（如果 Native 模块已自动加载则提示已就绪）
 function loadNativeSupport() {

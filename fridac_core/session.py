@@ -1448,18 +1448,24 @@ def _show_rich_interactive_info():
     comp = FridacCompleter()
     # 组装行：从补全词典获取函数 → (描述, 示例)
     preferred_order = [
-        # Java Hook
-        'traceClass','traceMethod','findClasses','enumAllClasses','describeJavaClass','printStack',
-        # 定位 Hook（新任务命令）
-        'hookbase64','hooktoast','hookjsonobject','hookhashmap','hookarraylist','hookloadlibrary','hooknewstringutf','hookfileoperations','hooklog','hookurl',
-        # 任务命令
-        'tasks','taskinfo','taskstats','kill','killall',
-        # Native
-        'nativeHookNativeFunction','nativeFindModules','nativeFindExports','nativeFindImports','nativeSearchMemory','printNativeStack',
-        'nativeHookDlopenFamily','nativeHookJNIFunctions','nativeHookCryptoFunctions','nativeHookNetworkFunctions','nativeHookAntiDebug','nativeAnalyzeSO',
-        'nativeEnableAllHooks','nativeQuickHookCrypto','nativeQuickHookNetwork','nativeQuickAnalyzeApp',
-        # 智能工具
-        'intelligentHookDispatcher','loadNativeSupport'
+        # 核心追踪功能
+        'traceClass', 'traceMethod', 'advancedMethodTracing',
+        # 类和对象搜索
+        'findClasses', 'enumAllClasses', 'classsearch', 'objectsearch',
+        # 对象分析
+        'classdump', 'objectdump', 'printJavaCallStack',
+        # 网络抓包
+        'fetch', 'okhttpStart', 'okhttpFind', 'okhttpHold', 'okhttpHistory', 'okhttpResend', 'okhttpClear',
+        # Hook 任务命令
+        'hookbase64', 'hooktoast', 'hookurl', 'hookhashmap', 'hookjsonobject', 
+        'hookarraylist', 'hooklog', 'hookedittext', 'hookloadlibrary', 
+        'hooknewstringutf', 'hookfileoperations', 'hookfetch',
+        # 任务管理命令
+        'tasks', 'taskinfo', 'taskstats', 'kill', 'killall',
+        # Native Hook
+        'nativeEnableAllHooks', 'nativeHookDlopen', 'nativeHookCrypto', 
+        'nativeHookNetwork', 'nativeHookFile', 'nativeHookAntiDebug',
+        'nativeFindModules', 'nativeFindExports', 'nativeFindImports'
     ]
     added = set()
     for name in preferred_order:
@@ -1483,17 +1489,19 @@ def _show_basic_interactive_info():
     print("💡 使用 Tab 键自动补全函数名和类名")
     print("📝 可以直接调用 JS 函数，例如:")
     print("   traceClass('com.example.MainActivity')")
-    print("   hookAllMethodsInJavaClass('com.example.MainActivity')  # 新函数名")
     print("   traceMethod('com.example.Class.method')")
-    print("   hookJavaMethodWithTracing('com.example.Class.method', true)  # 新函数名")
-    print("   advancedMethodTracing('com.example.Class.method', true, true)  # 高级追踪")
-    print("   batchHookWithFilters('com.example', 'test', null)  # 批量Hook")
-    print("   bypassTracerPidDetection()  # 绕过反调试")
-    print("   var id = traceMethodWithJob('com.example.Class.method', true)  # 可管理Hook")
-    print("   jobs()  # 查看任务")
-    print("   kill(id)  # 取消任务")
+    print("   advancedMethodTracing('com.example.Class.method', true, true)")
     print("   findClasses('MainActivity', true)")
+    print("   classdump('com.example.Class')")
+    print("   fetch('keyword')  # 网络抓包")
+    print("   okhttpStart()  # OkHttp日志")
+    print("📋 任务管理命令:")
+    print("   tasks          # 查看任务列表")
+    print("   kill <id>      # 终止任务")
+    print("   killall        # 终止所有任务")
+    print("   hookbase64     # Base64 Hook任务")
     print("📚 输入 help() 查看所有可用函数")
+    print("📚 输入 taskhelp 查看任务管理命令")
     print("🚪 输入 q 或 exit 退出")
     print("="*60 + "\n")
 

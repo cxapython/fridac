@@ -68,8 +68,7 @@ def create_frida_script():
     # 加载附加的脚本模块
     js_content += _load_native_hooks()
     js_content += _load_location_hooks()
-    js_content += _load_okhttp_logger_plugin()
-    js_content += _load_advanced_tracer()
+    # 注: frida_okhttp_logger.js 和 frida_advanced_tracer.js 已整合到 frida_common_new.js
     
     # 加载自定义脚本
     custom_scripts_content = _load_custom_scripts(script_path)
@@ -161,40 +160,6 @@ def _load_location_hooks():
                 log_warning("加载定位Hook工具失败: {}".format(e))
     
     log_debug("未找到 frida_location_hooks_new.js，定位工具不可用")
-    return ""
-
-def _load_okhttp_logger_plugin():
-    """加载 OkHttp Logger 插件 (独立JS)"""
-    candidates = _get_possible_paths('frida_okhttp_logger.js')
-    
-    for p in candidates:
-        if os.path.exists(p):
-            try:
-                with open(p, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                log_debug("OkHttp Logger 插件已加载: {}".format(p))
-                return '\n\n// ===== OkHttp Logger Plugin =====\n' + content
-            except Exception as e:
-                log_warning("加载 OkHttp Logger 插件失败: {}".format(e))
-    
-    log_debug("未找到 OkHttp Logger 插件，相关命令将不可用")
-    return ""
-
-def _load_advanced_tracer():
-    """加载高级追踪工具"""
-    tracer_paths = _get_possible_paths('frida_advanced_tracer.js')
-    
-    for path in tracer_paths:
-        if os.path.exists(path):
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    advanced_content = f.read()
-                log_debug("高级追踪工具已集成（基于 r0tracer）: {}".format(path))
-                return '\n\n// ===== Advanced Tracer Tools (Based on r0tracer) =====\n' + advanced_content
-            except Exception as e:
-                log_warning("加载高级追踪工具失败: {}".format(e))
-    
-    log_debug("未找到 frida_advanced_tracer.js，高级追踪工具不可用")
     return ""
 
 def _load_custom_scripts(script_path):
@@ -451,15 +416,12 @@ function help() {
         LOG("  printNativeStack() - 打印Native调用栈", { c: Color.White });
     }
     
-    LOG("\\n🔥 高级追踪功能 (基于 r0tracer):", { c: Color.Red });
-    LOG("  bypassTracerPidDetection() - 绕过TracerPid反调试检测", { c: Color.White });
-    LOG("  inspectObjectFields(obj, context) - 检查对象所有字段详情", { c: Color.White });
-    LOG("  advancedMethodTracing(method, enableFields, enableColor) - 高级方法追踪", { c: Color.White });
+    LOG("\\n🔥 高级追踪功能:", { c: Color.Red });
+    LOG("  advancedMethodTracing(method, enableStack, enableFields) - 高级方法追踪", { c: Color.White });
     LOG("    示例: advancedMethodTracing('com.example.Class.method', true, true)", { c: Color.Yellow });
-    LOG("  batchHookWithFilters(whitelist, blacklist, targetClass) - 批量Hook（黑白名单过滤）", { c: Color.White });
-    LOG("    示例: batchHookWithFilters('com.example', 'test', null)", { c: Color.Yellow });
-    LOG("  hookAllApplicationClasses(strictFilter) - Hook所有应用业务类", { c: Color.White });
-    LOG("    示例: hookAllApplicationClasses(true)", { c: Color.Yellow });
+    if (typeof nativeEnableAntiDebugBypass !== 'undefined') {
+        LOG("  nativeEnableAntiDebugBypass(options) - 反调试绕过（ptrace/TracerPid）", { c: Color.White });
+    }
     
     LOG("\\n📋 任务管理系统 (参考 objection):", { c: Color.Red });
     LOG("  jobs() - 显示所有活跃的Hook任务", { c: Color.White });
@@ -548,21 +510,9 @@ rpc.exports = {
     okhttpclear: (typeof okhttpClear !== 'undefined') ? okhttpClear : function(){ LOG("okhttpClear 需要 frida_common_new.js 中的OkHttp功能", { c: Color.Yellow }); },
     okhttpstart: (typeof okhttpStart !== 'undefined') ? okhttpStart : function(){ LOG("okhttpStart 需要 OkHttp 插件", { c: Color.Yellow }); },
     
-    // 高级追踪功能（基于 r0tracer）
-    bypassTracerPidDetection: typeof bypassTracerPidDetection !== 'undefined' ? bypassTracerPidDetection : function() { 
-        LOG("bypassTracerPidDetection 需要高级追踪工具", { c: Color.Yellow }); 
-    },
-    inspectObjectFields: typeof inspectObjectFields !== 'undefined' ? inspectObjectFields : function() { 
-        LOG("inspectObjectFields 需要高级追踪工具", { c: Color.Yellow }); 
-    },
+    // 高级追踪功能（已整合到 frida_common_new.js）
     advancedMethodTracing: typeof advancedMethodTracing !== 'undefined' ? advancedMethodTracing : function() { 
-        LOG("advancedMethodTracing 需要高级追踪工具", { c: Color.Yellow }); 
-    },
-    batchHookWithFilters: typeof batchHookWithFilters !== 'undefined' ? batchHookWithFilters : function() { 
-        LOG("batchHookWithFilters 需要高级追踪工具", { c: Color.Yellow }); 
-    },
-    hookAllApplicationClasses: typeof hookAllApplicationClasses !== 'undefined' ? hookAllApplicationClasses : function() { 
-        LOG("hookAllApplicationClasses 需要高级追踪工具", { c: Color.Yellow }); 
+        LOG("advancedMethodTracing 需要 frida_common_new.js", { c: Color.Yellow }); 
     },
     
     // 旧任务管理系统已禁用，现在使用新的Python端任务管理
