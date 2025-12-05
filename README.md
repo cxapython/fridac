@@ -36,21 +36,19 @@ pip install -e ".[full]"
 安装后，可以在任意目录直接使用 `fridac` 命令：
 
 ```bash
-fridac                      # 自动连接前台应用
+fridac                      # 自动连接前台应用（自动管理 frida-server）
 fridac -a                   # 选择应用
 fridac -f com.example.app   # Spawn 模式
 fridac -p com.example.app   # 附加模式
 
-# 自动管理 frida-server（推荐）
-fridac --auto               # 自动检测/下载/启动 frida-server
-fridac --auto -f com.app    # 自动启动 server 后 spawn 应用
+# frida-server 管理（通常无需手动操作）
 fridac --server-only        # 仅启动 frida-server
 fridac --stop-server        # 停止 frida-server
 ```
 
 ### frida-server 自动管理
 
-`--auto` 参数会自动完成以下流程：
+fridac 会在连接失败时**自动检测并启动 frida-server**，完成以下流程：
 
 1. **检测 ADB 连接** - 确认设备已连接
 2. **检查 Root 权限** - 验证 su 可用

@@ -228,11 +228,10 @@ def main():
   fridac -f com.example.app                 # Spawn 模式启动
   fridac -p com.example.app                 # 附加到应用
   
-自动管理 frida-server:
-  fridac --auto                             # 自动检测并启动 frida-server
-  fridac --auto -f com.example.app          # 自动启动 server 后 spawn 应用
+frida-server 管理:
   fridac --server-only                      # 仅启动 frida-server 不连接应用
   fridac --stop-server                      # 停止 frida-server
+  # 注: fridac 会自动检测并启动 frida-server，无需手动管理
   
 早期 Hook (仅 Spawn 模式):
   fridac -f com.app --hook traceRegisterNatives
@@ -250,13 +249,7 @@ def main():
     parser.add_argument('-a', '--apps', action='store_true',
                        help='显示应用列表供选择')
     
-    parser.add_argument('--spawn', type=str,
-                       help='Spawn 模式 (同 -f)')
-    
     # frida-server 管理选项
-    parser.add_argument('--auto', action='store_true',
-                       help='自动检测并启动 frida-server')
-    
     parser.add_argument('--server-only', action='store_true',
                        help='仅启动 frida-server，不连接应用')
     
@@ -303,13 +296,6 @@ def main():
         ensure_frida_server()
         return
     
-    # 如果指定了 --auto，先确保 frida-server 运行
-    if args.auto:
-        from fridac_core.device_manager import ensure_frida_server
-        if not ensure_frida_server():
-            log_error("❌ 无法启动 frida-server，退出")
-            return
-    
     # 如果指定了数据路径，更新环境变量
     if args.data_path:
         global DATA_PATH
@@ -322,9 +308,6 @@ def main():
     
     if args.package:
         target_package = args.package
-        spawn_mode = True
-    elif args.spawn:
-        target_package = args.spawn
         spawn_mode = True
     elif args.attach_package:
         target_package = args.attach_package
