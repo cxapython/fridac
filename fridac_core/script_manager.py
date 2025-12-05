@@ -216,7 +216,7 @@ def _load_custom_scripts(script_path):
         custom_imports = custom_manager.generate_script_imports()
         custom_exports = custom_manager.generate_rpc_exports()
         
-        log_success(f"✅ 已加载 {loaded_count} 个自定义脚本，包含 {len(custom_manager.get_all_functions())} 个函数")
+        # 汇总信息已在 CustomScriptManager.scan_scripts() 中输出
         
         # 将自定义脚本管理器保存为全局变量，供其他模块使用
         globals()['_custom_script_manager'] = custom_manager

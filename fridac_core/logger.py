@@ -111,23 +111,62 @@ def log_exception(prefix_message, exc: Exception = None):
         else:
             print(tb_text)
 
-def show_banner():
-    """显示 fridac 横幅（Banner）"""
-    if RICH_AVAILABLE:
-        banner_text = Text()
-        banner_text.append("🔧 ", style="bold cyan")
-        banner_text.append("fridac", style="bold green")
-        banner_text.append(" - Enhanced Frida CLI Tool", style="bold white")
+def show_banner(env_info=None):
+    """
+    显示 fridac 横幅（Banner）
+    Args:
+        env_info (dict): 环境信息字典，包含 python_version, frida_version 等
+    """
+    # 3D 风格 ASCII 艺术
+    ascii_art = r"""
+    ███████╗██████╗ ██╗██████╗  █████╗  ██████╗
+    ██╔════╝██╔══██╗██║██╔══██╗██╔══██╗██╔════╝
+    █████╗  ██████╔╝██║██║  ██║███████║██║     
+    ██╔══╝  ██╔══██╗██║██║  ██║██╔══██║██║     
+    ██║     ██║  ██║██║██████╔╝██║  ██║╚██████╗
+    ╚═╝     ╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝  ╚═╝ ╚═════╝
+    """
+    
+    # 构建版本副标题
+    if env_info:
+        py_ver = env_info.get('version', '?')
+        # 简化 Python 版本显示（只显示主要版本号）
+        if '.' in py_ver:
+            parts = py_ver.split('.')
+            py_ver = f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else py_ver
         
-        panel = Panel(
-            Align.center(banner_text),
-            box=DOUBLE,
-            border_style="cyan",
-            padding=(1, 2)
-        )
-        console.print(panel)
+        frida_ver = env_info.get('frida_version', '?')
+        # 简化 Frida 版本显示
+        if frida_ver and frida_ver != 'unknown':
+            frida_parts = frida_ver.split('.')
+            frida_ver = f"{frida_parts[0]}.{frida_parts[1]}" if len(frida_parts) >= 2 else frida_ver
+        
+        status = "✅ Ready" if frida_ver and frida_ver != 'unknown' else "⚠️ Frida未安装"
+        subtitle = f"Python {py_ver} │ Frida {frida_ver} │ {status}"
     else:
-        print("🔧 fridac - Enhanced Frida CLI Tool")
+        subtitle = "Enhanced Frida CLI Tool"
+    
+    if RICH_AVAILABLE:
+        from rich.text import Text as RichText
+        
+        # 渲染 ASCII 艺术，使用渐变色
+        lines = ascii_art.strip().split('\n')
+        colors = ['bright_cyan', 'cyan', 'blue', 'bright_blue', 'magenta', 'bright_magenta']
+        
+        console.print()  # 空行
+        for i, line in enumerate(lines):
+            color = colors[i % len(colors)]
+            console.print(f"[{color}]{line}[/{color}]")
+        
+        # 副标题居中显示
+        console.print()
+        console.print(f"[dim]{subtitle.center(50)}[/dim]")
+        console.print()
+    else:
+        # 无 Rich 时的降级显示
+        print(ascii_art)
+        print(f"         {subtitle}")
+        print()
 
 def get_console():
     """获取 Rich 控制台实例（若可用）"""

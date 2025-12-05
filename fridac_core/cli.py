@@ -60,8 +60,7 @@ from fridac_core.environment import (
     detect_python_environment, 
     get_frida_version, 
     get_frontmost_app, 
-    find_target_app,
-    show_environment_info
+    find_target_app
 )
 from fridac_core.session import FridacSession, run_interactive_session
 
@@ -325,12 +324,9 @@ frida-server 管理:
             log_info("没有检测到前台应用，显示应用列表...")
             force_show_apps = True
     
+    # 检测环境并显示 Banner（集成版本信息）
     env_info = detect_python_environment()
-    show_banner()
-    show_environment_info(env_info)
-    
-    # 显示数据路径信息
-    log_info(f"📁 数据路径: {DATA_PATH}")
+    show_banner(env_info)
     
     try:
         run_frida_session(

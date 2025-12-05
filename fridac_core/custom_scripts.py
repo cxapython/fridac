@@ -77,13 +77,7 @@ class CustomScriptManager:
         primary_scripts_dir = os.path.join(base_dir, 'scripts')
         if not os.path.exists(primary_scripts_dir):
             os.makedirs(primary_scripts_dir)
-            log_info(f"✅ 已创建自定义脚本目录: {primary_scripts_dir}")
             self._create_example_scripts()
-        
-        log_info(f"🎯 自定义脚本管理器初始化完成，监控目录: {len(self.scripts_dirs)} 个")
-        for d in self.scripts_dirs:
-            if os.path.exists(d):
-                log_debug(f"   📁 {d}")
     
     def _get_scripts_dirs(self) -> List[str]:
         """
@@ -342,7 +336,6 @@ function monitorSensitiveNetwork(sensitiveFields) {
                 continue
             
             scanned_dirs += 1
-            log_debug(f"📂 扫描脚本目录: {scripts_dir}")
 
             # 递归扫描 scripts/ 子目录，支持按文件夹分类
             for dirpath, _dirnames, filenames in os.walk(scripts_dir):
@@ -363,10 +356,12 @@ function monitorSensitiveNetwork(sensitiveFields) {
                         log_error(f"❌ 加载脚本失败 {rel_key}: {e}")
                         error_count += 1
         
-        if scanned_dirs == 0:
-            log_warning("⚠️ 没有找到任何脚本目录")
-        else:
-            log_success(f"✅ 脚本扫描完成: {scanned_dirs} 个目录, 成功 {loaded_count}, 失败 {error_count}")
+        # 只在加载了自定义脚本时显示汇总信息
+        if loaded_count > 0:
+            # 收集所有自定义函数名
+            custom_funcs = [name for name in self.functions.keys() if not name.startswith('__')]
+            if custom_funcs:
+                log_success(f"🔧 自定义脚本: {len(self.scripts)} 个, 函数: {', '.join(custom_funcs)}")
         
         return loaded_count
     
@@ -419,7 +414,6 @@ function monitorSensitiveNetwork(sensitiveFields) {
             for func_name, func_info in functions.items():
                 self.functions[func_name] = func_info
             
-            log_success(f"✅ 已加载脚本: {rel_key} ({len(functions)} 个函数)")
             return True
             
         except Exception as e:
@@ -441,10 +435,8 @@ function monitorSensitiveNetwork(sensitiveFields) {
         
         # 优先使用 AST 解析，回退到正则表达式
         if HAS_ESPRIMA:
-            log_debug("✅ 使用 esprima AST 解析")
             functions = self._parse_functions_with_ast(script_content, file_path)
         else:
-            log_debug("⚠️ esprima 不可用，使用正则表达式解析")
             functions = self._parse_functions_with_regex(script_content, file_path)
             
         return functions
@@ -473,7 +465,6 @@ function monitorSensitiveNetwork(sensitiveFields) {
                     
                     # 过滤内部工具函数：以双下划线开头的不对外展示/导出
                     if func_name.startswith('__'):
-                        log_debug(f"⏭️ 跳过内部函数: {func_name}")
                         continue
                     
                     # 获取参数列表
@@ -533,7 +524,6 @@ function monitorSensitiveNetwork(sensitiveFields) {
                     )
                     
                     functions[func_name] = function_info
-                    log_debug(f"📝 解析函数 (AST): {func_name}({', '.join(parameters)})")
                     
         except Exception as e:
             log_warning(f"⚠️ AST 解析失败，回退到正则表达式: {e}")
@@ -563,12 +553,10 @@ function monitorSensitiveNetwork(sensitiveFields) {
 
             # 过滤内部工具函数：以双下划线开头的不对外展示/导出
             if func_name.startswith('__'):
-                log_debug(f"⏭️ 跳过内部函数: {func_name}")
                 continue
                 
             # 检查是否为最外层函数（不在其他函数内部）
             if not self._is_top_level_function(script_content, match.start()):
-                log_debug(f"⏭️ 跳过嵌套函数: {func_name}")
                 continue
             params_str = match.group(2).strip()
             
@@ -607,7 +595,6 @@ function monitorSensitiveNetwork(sensitiveFields) {
             )
             
             functions[func_name] = function_info
-            log_debug(f"📝 解析函数: {func_name}({', '.join(parameters)})")
         
         return functions
     
