@@ -1660,7 +1660,7 @@ function nativeHookAntiDebug(showStack) {
 }
 
 // ============= Native Hook工具 =============
-function nativeHookNativeFunction(address, options) {
+function (address, options) {
     options = options || {};
     var showArgs = options.showArgs !== false;
     var showReturn = options.showReturn !== false;

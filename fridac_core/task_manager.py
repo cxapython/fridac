@@ -20,6 +20,12 @@ class TaskType(Enum):
     LOCATION_HOOK = "location_hook"
     BATCH_HOOK = "batch_hook"
     CUSTOM_HOOK = "custom_hook"
+    # 新增任务类型
+    TRACE_CLASS = "trace_class"       # traceClass 函数
+    TRACE_METHOD = "trace_method"     # traceMethod 函数
+    NETWORK_FETCH = "network_fetch"   # fetch 网络抓包
+    OKHTTP_HOLD = "okhttp_hold"       # OkHttp 拦截
+    ADVANCED_TRACE = "advanced_trace" # 高级追踪
 
 class TaskStatus(Enum):
     """任务状态枚举"""

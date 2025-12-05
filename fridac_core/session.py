@@ -521,6 +521,32 @@ class FridacSession:
                 )
                 description = f"Native Hook: {target}"
                 task_type_enum = TaskType.NATIVE_HOOK
+            # 新增任务类型
+            elif task_type == "trace_class":
+                script_source = self.script_engine.generate_trace_class_script(
+                    target, options or {}, 0
+                )
+                description = f"追踪类: {target}"
+                task_type_enum = TaskType.TRACE_CLASS
+            elif task_type == "trace_method":
+                script_source = self.script_engine.generate_trace_method_script(
+                    target, options or {}, 0
+                )
+                description = f"追踪方法: {target}"
+                task_type_enum = TaskType.TRACE_METHOD
+            elif task_type == "advanced_trace":
+                script_source = self.script_engine.generate_advanced_trace_script(
+                    target, options or {}, 0
+                )
+                description = f"高级追踪: {target}"
+                task_type_enum = TaskType.ADVANCED_TRACE
+            elif task_type == "network_fetch":
+                filter_str = options.get('filter', '') if options else ''
+                script_source = self.script_engine.generate_network_fetch_script(
+                    filter_str, options or {}, 0
+                )
+                description = f"网络抓包: {filter_str or '全部'}"
+                task_type_enum = TaskType.NETWORK_FETCH
             else:
                 log_error(f"❌ 不支持的任务类型: {task_type}")
                 return -1
@@ -738,11 +764,11 @@ def _handle_task_commands(session, user_input):
         status_filter = parts[1] if len(parts) > 1 else None
         # 显示新任务管理系统的任务
         session.list_tasks(status_filter)
-        # 同时显示旧任务管理系统的任务
-        try:
-            result = session.script.exports.eval("typeof jobs !== 'undefined' ? jobs() : null")
-        except:
-            pass
+        # 旧任务管理系统的任务 暂时禁用
+        # try:
+        #     result = session.script.exports.eval("typeof jobs !== 'undefined' ? jobs() : null")
+        # except:
+        #     pass
         return True
     
     # 终止任务命令
@@ -794,10 +820,10 @@ def _handle_task_commands(session, user_input):
         session.show_task_stats()
         return True
     
-    # 兼容旧风格：traceMethod(...) -> 创建方法Hook任务
-    elif cmd == 'tracemethod':
+    # traceclass - 使用新任务系统创建类追踪任务
+    elif cmd == 'traceclass':
         if len(parts) < 2:
-            log_error("❌ 用法: traceMethod <class.method> [show_stack]")
+            log_error("❌ 用法: traceclass <classname> [show_stack] [stack_lines]")
             return True
         target = parts[1]
         show_stack = len(parts) > 2 and parts[2].lower() in ['true', '1', 'yes']
@@ -810,9 +836,49 @@ def _handle_task_commands(session, user_input):
         options = {'show_stack': show_stack}
         if stack_lines is not None:
             options['stack_lines'] = stack_lines
-        task_id = session.create_hook_task('method', target, options)
+        task_id = session.create_hook_task('trace_class', target, options)
         if task_id > 0:
-            log_success(f"✅ 方法Hook任务已创建: #{task_id}")
+            log_success(f"✅ 类追踪任务已创建: #{task_id}")
+        else:
+            log_error("❌ 类追踪任务创建失败")
+        return True
+    
+    # tracemethod - 使用新任务系统创建方法追踪任务
+    elif cmd == 'tracemethod':
+        if len(parts) < 2:
+            log_error("❌ 用法: tracemethod <class.method> [show_stack] [stack_lines]")
+            return True
+        target = parts[1]
+        show_stack = len(parts) > 2 and parts[2].lower() in ['true', '1', 'yes']
+        stack_lines = None
+        if len(parts) > 3:
+            try:
+                stack_lines = int(parts[3])
+            except Exception:
+                stack_lines = None
+        options = {'show_stack': show_stack}
+        if stack_lines is not None:
+            options['stack_lines'] = stack_lines
+        task_id = session.create_hook_task('trace_method', target, options)
+        if task_id > 0:
+            log_success(f"✅ 方法追踪任务已创建: #{task_id}")
+        else:
+            log_error("❌ 方法追踪任务创建失败")
+        return True
+    
+    # advancedtrace - 高级追踪（带堆栈和字段信息）
+    elif cmd == 'advancedtrace':
+        if len(parts) < 2:
+            log_error("❌ 用法: advancedtrace <class.method> [enable_fields]")
+            return True
+        target = parts[1]
+        enable_fields = len(parts) > 2 and parts[2].lower() in ['true', '1', 'yes']
+        options = {'enable_stack': True, 'enable_fields': enable_fields}
+        task_id = session.create_hook_task('advanced_trace', target, options)
+        if task_id > 0:
+            log_success(f"✅ 高级追踪任务已创建: #{task_id}")
+        else:
+            log_error("❌ 高级追踪任务创建失败")
         return True
 
     # 创建Hook任务的简化命令
@@ -1247,22 +1313,42 @@ def _show_task_help():
     
     if RICH_AVAILABLE and console:
         help_table = Table(title="🎯 任务管理命令", box=ROUNDED, show_header=True, header_style="bold blue")
-        help_table.add_column("命令", style="green", width=20)
-        help_table.add_column("说明", style="cyan", width=35)
+        help_table.add_column("命令", style="green", width=28)
+        help_table.add_column("说明", style="cyan", width=32)
         help_table.add_column("示例", style="yellow", width=35)
         
         commands = [
+            # 任务管理
             ("tasks / jobs", "显示所有任务", "tasks, jobs running"),
             ("kill <id>", "终止指定任务", "kill 1"),
             ("killall [type]", "终止所有任务", "killall, killall method_hook"),
             ("taskinfo <id>", "显示任务详情", "taskinfo 1"),
             ("taskstats", "显示任务统计", "taskstats"),
+            # 类/方法追踪
+            ("traceclass", "追踪类的所有方法", "traceclass com.app.Main true"),
+            ("tracemethod", "追踪特定方法", "tracemethod com.app.Class.method true"),
+            ("advancedtrace", "高级追踪(带字段)", "advancedtrace com.app.Class.method true"),
+            # Hook 任务
             ("hookmethod", "创建方法Hook任务", "hookmethod com.app.Class.method true"),
             ("hookclass", "创建类Hook任务", "hookclass com.app.MainActivity"),
             ("hooknative", "创建Native Hook任务", "hooknative open true"),
-            ("hookbase64", "创建Base64 Hook任务", "hookbase64 true"),
-            ("hooktoast", "创建Toast Hook任务", "hooktoast"),
-            ("hookfetch [filter]", "创建网络抓包(fetch)任务", "hookfetch mtgsig"),
+            # 定位 Hook
+            ("hookbase64", "Base64 Hook", "hookbase64 true"),
+            ("hooktoast", "Toast Hook", "hooktoast"),
+            ("hookurl", "URL Hook", "hookurl true"),
+            ("hookhashmap [key]", "HashMap Hook", "hookhashmap password true"),
+            ("hookjsonobject", "JSONObject Hook", "hookjsonobject true"),
+            ("hookarraylist", "ArrayList Hook", "hookarraylist true"),
+            ("hooklog", "Log Hook", "hooklog true"),
+            ("hookedittext", "EditText Hook", "hookedittext true"),
+            ("hookloadlibrary", "LoadLibrary Hook", "hookloadlibrary true"),
+            ("hooknewstringutf", "JNI字符串Hook", "hooknewstringutf true"),
+            ("hookfileoperations", "文件操作Hook", "hookfileoperations true"),
+            # 网络抓包
+            ("hookfetch [filter]", "网络抓包(任务模式)", "hookfetch mtgsig"),
+            # 其他
+            ("genm", "生成方法Hook脚本", "genm com.app.Class.method output"),
+            ("selftest", "系统自测", "selftest"),
             ("taskhelp", "显示此帮助", "taskhelp")
         ]
         
@@ -1272,24 +1358,40 @@ def _show_task_help():
         console.print()
         console.print(help_table)
         console.print()
-        console.print("💡 [yellow]提示[/yellow]: 新的任务管理系统基于脚本隔离，每个任务运行在独立的Frida脚本中")
-        console.print("🗑️  [yellow]优势[/yellow]: killall 命令现在可以真正清理所有Hook，不会残留")
+        console.print("💡 [yellow]提示[/yellow]: 所有命令支持 [show_stack] [stack_lines] 参数控制调用栈显示")
+        console.print("🗑️  [yellow]优势[/yellow]: 基于脚本隔离的任务系统，killall 可以真正清理所有Hook")
         console.print()
     else:
         log_info("\n🎯 任务管理命令:")
-        log_info("tasks/jobs      - 显示所有任务")
-        log_info("kill <id>       - 终止指定任务")
-        log_info("killall [type]  - 终止所有任务")
-        log_info("taskinfo <id>   - 显示任务详情")
-        log_info("taskstats       - 显示任务统计")
-        log_info("hookmethod      - 创建方法Hook任务")
-        log_info("hookclass       - 创建类Hook任务")
-        log_info("hooknative      - 创建Native Hook任务")
-        log_info("hookbase64      - 创建Base64 Hook任务")
-        log_info("hooktoast       - 创建Toast Hook任务")
-        log_info("hookfetch [filter] - 创建网络抓包(fetch)任务")
-        log_info("taskhelp        - 显示此帮助")
-        log_info("\n💡 提示: 新的任务管理系统基于脚本隔离，killall可以真正清理所有Hook\n")
+        log_info("=" * 60)
+        log_info("📋 任务管理:")
+        log_info("  tasks/jobs      - 显示所有任务")
+        log_info("  kill <id>       - 终止指定任务")
+        log_info("  killall [type]  - 终止所有任务")
+        log_info("  taskinfo <id>   - 显示任务详情")
+        log_info("  taskstats       - 显示任务统计")
+        log_info("")
+        log_info("🔍 类/方法追踪:")
+        log_info("  traceclass <class> [show_stack]     - 追踪类的所有方法")
+        log_info("  tracemethod <class.method> [stack]  - 追踪特定方法")
+        log_info("  advancedtrace <method> [fields]     - 高级追踪")
+        log_info("")
+        log_info("🎯 Hook任务:")
+        log_info("  hookmethod <class.method> [stack]   - 方法Hook")
+        log_info("  hookclass <class> [stack]           - 类Hook")
+        log_info("  hooknative <func> [stack]           - Native Hook")
+        log_info("")
+        log_info("📍 定位Hook:")
+        log_info("  hookbase64, hooktoast, hookurl, hookhashmap,")
+        log_info("  hookjsonobject, hookarraylist, hooklog,")
+        log_info("  hookedittext, hookloadlibrary, hooknewstringutf,")
+        log_info("  hookfileoperations")
+        log_info("")
+        log_info("🌐 网络抓包:")
+        log_info("  hookfetch [filter] - 网络抓包(任务模式)")
+        log_info("")
+        log_info("💡 提示: 所有命令支持 [show_stack] [stack_lines] 参数")
+        log_info("🗑️ 优势: killall 可以真正清理所有Hook\n")
 
 def _show_rich_interactive_info():
     """Show interactive information with Rich UI"""

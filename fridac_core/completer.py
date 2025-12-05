@@ -54,28 +54,34 @@ class FridacCompleter:
             'killall': ('🧹 终止所有任务', "killall"),
             'taskinfo': ('🔍 查看任务详情', "taskinfo 1"),
             'taskstats': ('📊 查看任务统计', "taskstats"),
+            'taskhelp': ('❓ 任务命令帮助', "taskhelp"),
             
-            # 统一使用新的 hook* / task* 命令
+            # 类/方法追踪 (使用任务系统)
+            'traceclass': ('🏛️ 追踪类的所有方法(任务)', "traceclass com.example.MainActivity true"),
+            'tracemethod': ('🎯 追踪特定方法(任务)', "tracemethod com.example.Class.method true"),
+            'advancedtrace': ('🔥 高级追踪(带字段)', "advancedtrace com.example.Class.method true"),
             
-            # 新的Hook任务命令
-            'hookbase64': ('🔐 创建Base64 Hook任务', "hookbase64 true"),
-            'hooktoast': ('🍞 创建Toast Hook任务', "hooktoast true"),
-            'hookjsonobject': ('📝 创建JSONObject Hook任务', "hookjsonobject true"),
-            'hookhashmap': ('🗺️ 创建HashMap Hook任务', "hookhashmap password true"),
-            'hookedittext': ('📝 创建EditText Hook任务', "hookedittext true"),
-            'hookarraylist': ('📋 创建ArrayList Hook任务', "hookarraylist true"),
-            'hookloadlibrary': ('📚 创建LoadLibrary Hook任务', "hookloadlibrary true"),
-            'hooknewstringutf': ('🔤 创建JNI字符串Hook任务', "hooknewstringutf true"),
-            'hookfileoperations': ('📁 创建文件操作Hook任务', "hookfileoperations true"),
-            'hooklog': ('📜 创建日志Hook任务', "hooklog true"),
-            'hookurl': ('🌐 创建URL Hook任务', "hookurl true"),
-            'hookfetch': ('🌐 创建网络抓包(fetch)任务', "hookfetch mtgsig"),
-            'hookmethod': ('⚙️ 创建Java方法Hook任务', "hookmethod com.example.Class.method true"),
-            'hookclass': ('⚙️ 创建Java类Hook任务', "hookclass com.example.MainActivity true"),
-            'hooknative': ('🖥️ 创建Native Hook任务', "hooknative malloc true"),
-            'tasks': ('📋 查看所有任务', "tasks"),
-            'taskinfo': ('🔍 查看任务详情', "taskinfo 1"),
-            'taskstats': ('📊 查看任务统计', "taskstats"),
+            # Hook任务命令
+            'hookbase64': ('🔐 Base64 Hook任务', "hookbase64 true"),
+            'hooktoast': ('🍞 Toast Hook任务', "hooktoast true"),
+            'hookjsonobject': ('📝 JSONObject Hook任务', "hookjsonobject true"),
+            'hookhashmap': ('🗺️ HashMap Hook任务', "hookhashmap password true"),
+            'hookedittext': ('📝 EditText Hook任务', "hookedittext true"),
+            'hookarraylist': ('📋 ArrayList Hook任务', "hookarraylist true"),
+            'hookloadlibrary': ('📚 LoadLibrary Hook任务', "hookloadlibrary true"),
+            'hooknewstringutf': ('🔤 JNI字符串Hook任务', "hooknewstringutf true"),
+            'hookfileoperations': ('📁 文件操作Hook任务', "hookfileoperations true"),
+            'hooklog': ('📜 日志Hook任务', "hooklog true"),
+            'hookurl': ('🌐 URL Hook任务', "hookurl true"),
+            'hookfetch': ('🌐 网络抓包任务', "hookfetch mtgsig"),
+            'hookmethod': ('⚙️ Java方法Hook任务', "hookmethod com.example.Class.method true"),
+            'hookclass': ('⚙️ Java类Hook任务', "hookclass com.example.MainActivity true"),
+            'hooknative': ('🖥️ Native Hook任务', "hooknative malloc true"),
+            
+            # 其他工具命令
+            'genm': ('🔧 生成方法Hook脚本', "genm com.example.Class.method output"),
+            'selftest': ('🧪 系统自测', "selftest"),
+            'reload_scripts': ('🔄 重载自定义脚本', "reload_scripts"),
             
             # Native Hook 函数
             'nativeHookNativeFunction': ('🔧 Hook Native 函数', "nativeHookNativeFunction('malloc', {argTypes: ['int']})"),
@@ -101,20 +107,9 @@ class FridacCompleter:
             'intelligentHookDispatcher': ('🎯 智能识别并Hook目标', "intelligentHookDispatcher('com.example.MainActivity', {enableStackTrace: true})"),
             'loadNativeSupport': ('🔧 加载Native Hook工具', "loadNativeSupport()"),
             
-            # 工具函数
-            'uniqBy': ('🎲 数组去重工具', "uniqBy(array, function(item) { return item.id; })"),
-            'bytesToString': ('🔤 字节转换为字符串', "bytesToString([72, 101, 108, 108, 111])"),
-            'LOG': ('📝 增强的日志输出', "LOG('message', {c: Color.Green})"),
-            'Color': ('🎨 颜色常量', "Color.Red, Color.Green, Color.Blue"),
             'help': ('❓ 显示帮助信息', "help()"),
             'q': ('🚪 退出程序', "q"),
-            'quit': ('🚪 退出程序', "quit"),
-            'exit': ('🚪 退出程序', "exit"),
-            
-            # 自定义脚本管理命令
-            'reload_scripts': ('🔄 重新加载自定义脚本', "reload_scripts"),
-            'reloadscripts': ('🔄 重新加载自定义脚本', "reloadscripts")
-        }
+            }
         
         # 加载自定义函数
         self._load_custom_functions()

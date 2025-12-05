@@ -139,31 +139,30 @@ var Color = {
 };
 
 function LOG(message, options) {
-    options = options || {};
-    var color = options.c || Color.White;
-    var output = color + message + Color.Reset;
-    console.log(output);
-    
-    // 发送给任务管理器统计
-    if (typeof TASK_ID !== 'undefined') {
-        // 最小化 emitEvent 实现
-        try {
-            var evt = { type: 'task_hit', ts: Date.now(), task_id: TASK_ID, items: { message: String(message) } };
-            try { evt.pid = Process.id; } catch(_){}
-            try { evt.tid = Process.getCurrentThreadId(); } catch(_){}
-            send(evt);
-        } catch(_) {}
+    try {
+        // 统一通过 send() 向 Python 端输出
+        var text = (message === null || typeof message === 'undefined') ? '' : String(message);
+        send(text);
+    } catch (e) {
+        try { send(String(message)); } catch (_) {}
     }
 }
 
-function printStack() {
+function printStack(showComplete, maxLines) {
     try {
-        var stack = Java.use("android.util.Log").getStackTraceString(Java.use("java.lang.Exception").$new());
-        var lines = stack.split("\\n");
+        var exception = Java.use("java.lang.Exception").$new();
+        var trace = exception.getStackTrace();
         LOG("📚 调用堆栈:", { c: Color.Cyan });
-        for (var i = 0; i < Math.min(lines.length, 8); i++) {
-            if (lines[i].trim()) {
-                LOG("📍 " + lines[i].trim(), { c: Color.Gray });
+        
+        var limit = showComplete ? trace.length : (typeof maxLines === 'number' && maxLines > 0 ? maxLines : 20);
+        var printed = 0;
+        for (var i = 0; i < trace.length && printed < limit; i++) {
+            var element = trace[i].toString();
+            if (element.indexOf("java.lang.Exception") === -1 &&
+                element.indexOf("android.util.Log") === -1 &&
+                element.indexOf("dalvik.system") === -1) {
+                LOG("📍 " + element, { c: Color.Gray });
+                printed++;
             }
         }
     } catch (e) {
@@ -185,6 +184,24 @@ if (typeof emitEvent === 'undefined') {
             try { send({ type: 'event', error: e.message }); } catch(_){ }
         }
     };
+}
+
+// ClassLoader 搜索功能 (供独立脚本使用)
+function findTragetClassLoader(className) {
+    var foundLoader = null;
+    try {
+        Java.enumerateClassLoadersSync().forEach(function(loader) {
+            try {
+                var factory = Java.ClassFactory.get(loader);
+                factory.use(className);
+                foundLoader = loader;
+                return;
+            } catch (e) {}
+        });
+    } catch (e) {
+        LOG("⚠️ 搜索ClassLoader时出错: " + e.message, { c: Color.Yellow });
+    }
+    return foundLoader;
 }
 '''
     
@@ -1224,10 +1241,422 @@ try {{
             }
 
             Java.perform(function(){ try{ __installOkHttp3(); }catch(_){ } try{ __installHttpURLConnection(); }catch(_){ } });
-            LOG('✅ fetch 任务已启动' + (__filter ? (' (过滤: 'ya_filter+')') : ''), { c: Color.Green });
+            LOG('✅ fetch 任务已启动' + (__filter ? (' (过滤: '+__filter+')') : ''), { c: Color.Green });
         } catch (e) {
             LOG('❌ fetch 任务启动失败: ' + e.message, { c: Color.Red });
             notifyTaskError(e);
         }
         '''
         return script.replace('__FRIDAC_FILTER_PLACEHOLDER__', filter_js_value)
+    
+    def generate_trace_class_script(self, class_name: str, options: Dict[str, Any], task_id: int) -> str:
+        """
+        生成 traceClass 脚本 - Hook类的所有方法
+        
+        Args:
+            class_name: 类名
+            options: Hook选项
+            task_id: 任务ID
+            
+        Returns:
+            完整的脚本代码
+        """
+        show_stack = options.get('show_stack', False)
+        stack_lines = options.get('stack_lines')
+        
+        stack_code = ""
+        if show_stack:
+            if stack_lines is not None:
+                stack_code = f"printStack(false, {stack_lines});"
+            else:
+                stack_code = "printStack();"
+        
+        script = f'''
+// 任务ID (用于通信)
+var TASK_ID = {task_id};
+
+{self.base_functions}
+
+// ===== traceClass 脚本 =====
+Java.perform(function() {{
+    try {{
+        var targetClass = null;
+        var className = "{class_name}";
+        
+        LOG("🏛️ 跟踪类: " + className, {{ c: Color.Cyan }});
+        
+        // 尝试加载类 (支持ClassLoader搜索)
+        try {{
+            targetClass = Java.use(className);
+        }} catch (error) {{
+            if ((error.message || '').indexOf("ClassNotFoundException") !== -1) {{
+                LOG("❌ 类未在默认ClassLoader中找到，搜索其他ClassLoader...", {{ c: Color.Yellow }});
+                
+                var foundLoader = null;
+                try {{
+                    Java.enumerateClassLoadersSync().forEach(function(loader) {{
+                        try {{
+                            var factory = Java.ClassFactory.get(loader);
+                            factory.use(className);
+                            foundLoader = loader;
+                        }} catch (e) {{}}
+                    }});
+                }} catch(e) {{}}
+                
+                if (foundLoader) {{
+                    targetClass = Java.ClassFactory.get(foundLoader).use(className);
+                    LOG("🎯 成功使用自定义ClassLoader加载类", {{ c: Color.Green }});
+                }} else {{
+                    LOG("❌ 在所有ClassLoader中都未找到类: " + className, {{ c: Color.Red }});
+                    notifyTaskError(new Error("Class not found: " + className));
+                    return;
+                }}
+            }} else {{
+                throw error;
+            }}
+        }}
+        
+        // Hook类的所有方法
+        var methods = targetClass.class.getDeclaredMethods();
+        var hookedCount = 0;
+        
+        methods.forEach(function(method) {{
+            try {{
+                var methodName = method.getName();
+                
+                // 跳过特殊方法
+                if (methodName.indexOf("$") !== -1 || methodName.indexOf("<") !== -1) {{
+                    return;
+                }}
+                
+                var originalImpl = targetClass[methodName];
+                if (originalImpl) {{
+                    targetClass[methodName].implementation = function() {{
+                        var fullMethodName = className + "." + methodName;
+                        LOG("\\n*** 进入 " + fullMethodName, {{ c: Color.Green }});
+                        
+                        {stack_code}
+                        
+                        // 打印参数
+                        if (arguments.length > 0) {{
+                            LOG("📥 参数:", {{ c: Color.Blue }});
+                            for (var i = 0; i < arguments.length; i++) {{
+                                LOG("  arg[" + i + "]: " + arguments[i], {{ c: Color.White }});
+                            }}
+                        }}
+                        
+                        var retval = originalImpl.apply(this, arguments);
+                        
+                        LOG("📤 返回值: " + retval, {{ c: Color.Blue }});
+                        LOG("🏁 退出 " + fullMethodName + "\\n", {{ c: Color.Green }});
+                        
+                        notifyTaskHit({{
+                            class_name: className,
+                            method: methodName,
+                            args_count: arguments.length
+                        }});
+                        
+                        return retval;
+                    }};
+                    hookedCount++;
+                }}
+            }} catch (e) {{
+                // 忽略无法Hook的方法
+            }}
+        }});
+        
+        LOG("✅ 类Hook设置成功: " + hookedCount + " 个方法", {{ c: Color.Green }});
+        
+    }} catch (error) {{
+        LOG("❌ 类Hook设置失败: " + error.message, {{ c: Color.Red }});
+        notifyTaskError(error);
+    }}
+}});
+'''
+        return script
+    
+    def generate_trace_method_script(self, full_method_name: str, options: Dict[str, Any], task_id: int) -> str:
+        """
+        生成 traceMethod 脚本 - Hook特定方法
+        
+        Args:
+            full_method_name: 完整方法名 (com.example.Class.method)
+            options: Hook选项
+            task_id: 任务ID
+            
+        Returns:
+            完整的脚本代码
+        """
+        show_stack = options.get('show_stack', False)
+        stack_lines = options.get('stack_lines')
+        custom_return = options.get('custom_return_value')
+        
+        stack_code = ""
+        if show_stack:
+            if stack_lines is not None:
+                stack_code = f"printStack(false, {stack_lines});"
+            else:
+                stack_code = "printStack();"
+        
+        return_code = ""
+        if custom_return is not None:
+            return_code = f"retval = {custom_return};"
+        
+        script = f'''
+// 任务ID (用于通信)
+var TASK_ID = {task_id};
+
+{self.base_functions}
+
+// ===== traceMethod 脚本 =====
+Java.perform(function() {{
+    try {{
+        var fullyQualifiedMethodName = "{full_method_name}";
+        LOG("🎯 跟踪方法: " + fullyQualifiedMethodName, {{ c: Color.Cyan }});
+        
+        // 解析类名和方法名
+        var lastDotIndex = fullyQualifiedMethodName.lastIndexOf('.');
+        if (lastDotIndex === -1) {{
+            LOG("❌ 方法名格式错误，应为: com.example.Class.method", {{ c: Color.Red }});
+            notifyTaskError(new Error("Invalid method name format"));
+            return;
+        }}
+        
+        var className = fullyQualifiedMethodName.substring(0, lastDotIndex);
+        var methodName = fullyQualifiedMethodName.substring(lastDotIndex + 1);
+        
+        var targetClass = null;
+        
+        // 尝试加载类
+        try {{
+            targetClass = Java.use(className);
+        }} catch (error) {{
+            if ((error.message || '').indexOf("ClassNotFoundException") !== -1) {{
+                LOG("❌ 类未在默认ClassLoader中找到，搜索其他ClassLoader...", {{ c: Color.Yellow }});
+                
+                var foundLoader = null;
+                try {{
+                    Java.enumerateClassLoadersSync().forEach(function(loader) {{
+                        try {{
+                            var factory = Java.ClassFactory.get(loader);
+                            factory.use(className);
+                            foundLoader = loader;
+                        }} catch (e) {{}}
+                    }});
+                }} catch(e) {{}}
+                
+                if (foundLoader) {{
+                    targetClass = Java.ClassFactory.get(foundLoader).use(className);
+                    LOG("🎯 成功使用自定义ClassLoader加载类", {{ c: Color.Green }});
+                }} else {{
+                    LOG("❌ 在所有ClassLoader中都未找到类: " + className, {{ c: Color.Red }});
+                    notifyTaskError(new Error("Class not found: " + className));
+                    return;
+                }}
+            }} else {{
+                throw error;
+            }}
+        }}
+        
+        if (!targetClass || !targetClass[methodName]) {{
+            LOG("❌ 未找到方法: " + fullyQualifiedMethodName, {{ c: Color.Red }});
+            notifyTaskError(new Error("Method not found"));
+            return;
+        }}
+        
+        // 参数类型辅助函数
+        function __getArgType(value) {{
+            try {{
+                if (value === null) return 'null';
+                if (typeof value === 'undefined') return 'undefined';
+                if (value && typeof value.getClass === 'function') {{
+                    try {{ return String(value.getClass().getName()); }} catch(_) {{}}
+                }}
+                if (value && value.$className) {{
+                    try {{ return String(value.$className); }} catch(_) {{}}
+                }}
+                return typeof value;
+            }} catch (_) {{
+                return 'unknown';
+            }}
+        }}
+        
+        var wrapper = targetClass[methodName];
+        var overloads = wrapper.overloads || [];
+        
+        if (overloads.length > 0) {{
+            LOG("🔀 发现 " + overloads.length + " 个重载，逐个设置Hook...", {{ c: Color.Blue }});
+            for (var i = 0; i < overloads.length; i++) {{
+                try {{
+                    (function(over) {{
+                        over.implementation = function() {{
+                            LOG("\\n*** 进入 " + fullyQualifiedMethodName, {{ c: Color.Green }});
+                            
+                            {stack_code}
+                            
+                            if (arguments.length > 0) {{
+                                LOG("📥 参数:", {{ c: Color.Blue }});
+                                for (var j = 0; j < arguments.length; j++) {{
+                                    var __t = __getArgType(arguments[j]);
+                                    LOG("  arg[" + j + "] (" + __t + "): " + arguments[j], {{ c: Color.White }});
+                                }}
+                            }}
+                            
+                            var retval = over.apply(this, arguments);
+                            {return_code}
+                            
+                            LOG("📤 返回值: " + retval, {{ c: Color.Blue }});
+                            LOG("🏁 退出 " + fullyQualifiedMethodName + "\\n", {{ c: Color.Green }});
+                            
+                            notifyTaskHit({{
+                                method: fullyQualifiedMethodName,
+                                args_count: arguments.length,
+                                return_value: (retval !== undefined && retval !== null) ? String(retval) : "null"
+                            }});
+                            
+                            return retval;
+                        }};
+                    }})(overloads[i]);
+                }} catch(_) {{}}
+            }}
+        }} else {{
+            // 兜底：无 overload 信息时直接设置
+            wrapper.implementation = function() {{
+                LOG("\\n*** 进入 " + fullyQualifiedMethodName, {{ c: Color.Green }});
+                
+                {stack_code}
+                
+                if (arguments.length > 0) {{
+                    LOG("📥 参数:", {{ c: Color.Blue }});
+                    for (var k = 0; k < arguments.length; k++) {{
+                        var __t2 = __getArgType(arguments[k]);
+                        LOG("  arg[" + k + "] (" + __t2 + "): " + arguments[k], {{ c: Color.White }});
+                    }}
+                }}
+                
+                var retval = this[methodName].apply(this, arguments);
+                {return_code}
+                
+                LOG("📤 返回值: " + retval, {{ c: Color.Blue }});
+                LOG("🏁 退出 " + fullyQualifiedMethodName + "\\n", {{ c: Color.Green }});
+                
+                notifyTaskHit({{
+                    method: fullyQualifiedMethodName,
+                    args_count: arguments.length,
+                    return_value: (retval !== undefined && retval !== null) ? String(retval) : "null"
+                }});
+                
+                return retval;
+            }};
+        }}
+        
+        LOG("✅ 方法Hook设置成功: " + fullyQualifiedMethodName, {{ c: Color.Green }});
+        
+    }} catch (error) {{
+        LOG("❌ 方法Hook设置失败: " + error.message, {{ c: Color.Red }});
+        notifyTaskError(error);
+    }}
+}});
+'''
+        return script
+    
+    def generate_advanced_trace_script(self, full_method_name: str, options: Dict[str, Any], task_id: int) -> str:
+        """
+        生成高级追踪脚本 - 带堆栈和字段信息
+        
+        Args:
+            full_method_name: 完整方法名
+            options: Hook选项
+            task_id: 任务ID
+            
+        Returns:
+            完整的脚本代码
+        """
+        enable_stack = options.get('enable_stack', True)
+        enable_fields = options.get('enable_fields', True)
+        
+        script = f'''
+// 任务ID (用于通信)
+var TASK_ID = {task_id};
+
+{self.base_functions}
+
+// ===== 高级追踪脚本 =====
+Java.perform(function() {{
+    try {{
+        var fullyQualifiedMethodName = "{full_method_name}";
+        LOG("🔥 高级追踪: " + fullyQualifiedMethodName, {{ c: Color.Cyan }});
+        
+        var lastDotIndex = fullyQualifiedMethodName.lastIndexOf('.');
+        if (lastDotIndex === -1) {{
+            LOG("❌ 方法名格式错误", {{ c: Color.Red }});
+            notifyTaskError(new Error("Invalid method name format"));
+            return;
+        }}
+        
+        var className = fullyQualifiedMethodName.substring(0, lastDotIndex);
+        var methodName = fullyQualifiedMethodName.substring(lastDotIndex + 1);
+        
+        var targetClass = Java.use(className);
+        
+        targetClass[methodName].implementation = function() {{
+            LOG("\\n🔥 === 高级追踪开始 ===", {{ c: Color.Cyan }});
+            LOG("🎯 方法: " + fullyQualifiedMethodName, {{ c: Color.Yellow }});
+            
+            // 显示堆栈
+            {"printStack();" if enable_stack else ""}
+            
+            // 显示字段信息
+            {"try { var fields = this.class.getDeclaredFields(); LOG('📋 对象字段:', { c: Color.Blue }); for (var i = 0; i < Math.min(fields.length, 10); i++) { var field = fields[i]; LOG('  ' + field.getName() + ': ' + field.getType(), { c: Color.Gray }); } } catch (e) { LOG('⚠️ 无法获取字段信息', { c: Color.Yellow }); }" if enable_fields else ""}
+            
+            // 参数信息
+            if (arguments.length > 0) {{
+                LOG("📥 参数详情:", {{ c: Color.Blue }});
+                for (var i = 0; i < arguments.length; i++) {{
+                    var arg = arguments[i];
+                    var argType = "unknown";
+                    try {{ argType = arg ? String(arg.getClass().getName()) : "null"; }} catch(e) {{}}
+                    LOG("  arg[" + i + "] (" + argType + "): " + arg, {{ c: Color.White }});
+                }}
+            }}
+            
+            var retval = this[methodName].apply(this, arguments);
+            
+            LOG("📤 返回值: " + retval, {{ c: Color.Blue }});
+            LOG("🔥 === 高级追踪结束 ===\\n", {{ c: Color.Cyan }});
+            
+            notifyTaskHit({{
+                method: fullyQualifiedMethodName,
+                args_count: arguments.length,
+                return_value: (retval !== undefined && retval !== null) ? String(retval) : "null",
+                trace_type: "advanced"
+            }});
+            
+            return retval;
+        }};
+        
+        LOG("✅ 高级追踪已启用", {{ c: Color.Green }});
+        
+    }} catch (error) {{
+        LOG("❌ 高级追踪失败: " + error.message, {{ c: Color.Red }});
+        notifyTaskError(error);
+    }}
+}});
+'''
+        return script
+    
+    def generate_network_fetch_script(self, filter_str: str, options: Dict[str, Any], task_id: int) -> str:
+        """
+        生成网络抓包脚本（独立任务版本）
+        复用 _get_fetch_hook_impl 的实现
+        
+        Args:
+            filter_str: 过滤字符串
+            options: Hook选项
+            task_id: 任务ID
+            
+        Returns:
+            完整的脚本代码
+        """
+        # 复用现有的 fetch 实现
+        return self._get_fetch_hook_impl(filter_str)
