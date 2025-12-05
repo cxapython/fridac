@@ -117,15 +117,14 @@ def show_banner(env_info=None):
     Args:
         env_info (dict): 环境信息字典，包含 python_version, frida_version 等
     """
-    # 3D 风格 ASCII 艺术
-    ascii_art = r"""
-    ███████╗██████╗ ██╗██████╗  █████╗  ██████╗
-    ██╔════╝██╔══██╗██║██╔══██╗██╔══██╗██╔════╝
-    █████╗  ██████╔╝██║██║  ██║███████║██║     
-    ██╔══╝  ██╔══██╗██║██║  ██║██╔══██║██║     
-    ██║     ██║  ██║██║██████╔╝██║  ██║╚██████╗
-    ╚═╝     ╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝  ╚═╝ ╚═════╝
-    """
+    # 纯块字符 ASCII 艺术（避免线条字符宽度不一致问题）
+    ascii_art = (
+        "  ███████ ██████  ██ ██████   █████   ██████\n"
+        "  ██      ██   ██ ██ ██   ██ ██   ██ ██\n"
+        "  █████   ██████  ██ ██   ██ ███████ ██\n"
+        "  ██      ██   ██ ██ ██   ██ ██   ██ ██\n"
+        "  ██      ██   ██ ██ ██████  ██   ██  ██████"
+    )
     
     # 构建版本副标题
     if env_info:
@@ -150,7 +149,8 @@ def show_banner(env_info=None):
         from rich.text import Text as RichText
         
         # 渲染 ASCII 艺术，使用渐变色
-        lines = ascii_art.strip().split('\n')
+        lines = ascii_art.split('\n')
+        lines = [l for l in lines if l.strip()]  # 移除空行但保留缩进
         colors = ['bright_cyan', 'cyan', 'blue', 'bright_blue', 'magenta', 'bright_magenta']
         
         console.print()  # 空行
