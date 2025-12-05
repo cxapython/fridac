@@ -1,0 +1,20 @@
+# 包含所有 JavaScript 文件
+include *.js
+include *.json
+recursive-include frida_native *.js
+recursive-include scripts *.js
+
+# 包含文档
+include README.md
+include LICENSE
+include requirements.txt
+
+# 包含配置
+include early_hooks.json
+
+# 排除不需要的文件
+exclude .DS_Store
+exclude *.pyc
+recursive-exclude __pycache__ *
+recursive-exclude .git *
+

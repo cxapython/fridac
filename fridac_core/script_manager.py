@@ -8,16 +8,47 @@ import os
 from .logger import log_error, log_debug, log_warning, log_info, log_success
 from .custom_scripts import CustomScriptManager
 
+
+def _get_data_path():
+    """获取数据文件路径"""
+    # 优先级1: 环境变量
+    if 'FRIDAC_DATA_PATH' in os.environ:
+        return os.environ['FRIDAC_DATA_PATH']
+    
+    # 优先级2: 脚本所在目录的父目录
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _get_possible_paths(filename, subdir=None):
+    """获取文件的所有可能路径"""
+    data_path = _get_data_path()
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    paths = []
+    
+    # 数据路径
+    if subdir:
+        paths.append(os.path.join(data_path, subdir, filename))
+    paths.append(os.path.join(data_path, filename))
+    
+    # 基础目录
+    if subdir:
+        paths.append(os.path.join(base_dir, subdir, filename))
+    paths.append(os.path.join(base_dir, filename))
+    
+    # 当前目录
+    if subdir:
+        paths.append(os.path.join('.', subdir, filename))
+    paths.append(os.path.join('.', filename))
+    paths.append(filename)
+    
+    return paths
+
+
 def create_frida_script():
     """创建包含全部工具函数的 Frida 脚本"""
-    # 在多处路径尝试查找 frida_common_new.js
-    possible_paths = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frida_common_new.js'),
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_common_new.js'),
-        os.path.join(os.path.expanduser('~'), 'fridaproject', 'frida_common_new.js'),
-        'frida_common_new.js',  # Absolute fallback
-        './frida_common_new.js'  # Current directory
-    ]
+    # 使用统一的路径查找函数
+    possible_paths = _get_possible_paths('frida_common_new.js')
     
     script_path = None
     for path in possible_paths:
@@ -57,9 +88,16 @@ def create_frida_script():
 
 def _load_native_hooks():
     """加载 Native Hook 工具"""
+    data_path = _get_data_path()
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
     # 优先加载模块化目录
-    modular_dir = os.path.join(base_dir, 'frida_native')
+    modular_dirs = [
+        os.path.join(data_path, 'frida_native'),
+        os.path.join(base_dir, 'frida_native'),
+        os.path.join('.', 'frida_native')
+    ]
+    
     modular_files_order = [
         'frida_native_core.js',
         'frida_native_linker.js',
@@ -73,30 +111,26 @@ def _load_native_hooks():
         'frida_native_suite.js'
     ]
 
-    if os.path.isdir(modular_dir):
-        try:
-            contents = []
-            for fname in modular_files_order:
-                fpath = os.path.join(modular_dir, fname)
-                if not os.path.exists(fpath):
-                    log_warning("模块化Native文件缺失: {}".format(fpath))
-                    continue
-                with open(fpath, 'r', encoding='utf-8') as f:
-                    contents.append(f.read())
-            if contents:
-                log_debug("已加载模块化 Native Hook 工具: {}".format(', '.join(modular_files_order)))
-                return '\n\n// ===== Native Hook Tools (Modular) =====\n' + '\n\n'.join(contents)
-        except Exception as e:
-            log_warning("加载模块化 Native Hook 工具失败: {}".format(e))
+    for modular_dir in modular_dirs:
+        if os.path.isdir(modular_dir):
+            try:
+                contents = []
+                for fname in modular_files_order:
+                    fpath = os.path.join(modular_dir, fname)
+                    if not os.path.exists(fpath):
+                        log_warning("模块化Native文件缺失: {}".format(fpath))
+                        continue
+                    with open(fpath, 'r', encoding='utf-8') as f:
+                        contents.append(f.read())
+                if contents:
+                    log_debug("已加载模块化 Native Hook 工具: {}".format(', '.join(modular_files_order)))
+                    return '\n\n// ===== Native Hook Tools (Modular) =====\n' + '\n\n'.join(contents)
+            except Exception as e:
+                log_warning("加载模块化 Native Hook 工具失败: {}".format(e))
+                continue
 
     # 回退到单文件版本
-    native_paths = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frida_native_common.js'),
-        os.path.join(base_dir, 'frida_native_common.js'),
-        os.path.join(os.path.expanduser('~'), 'fridaproject', 'frida_native_common.js'),
-        'frida_native_common.js',
-        './frida_native_common.js'
-    ]
+    native_paths = _get_possible_paths('frida_native_common.js')
 
     for path in native_paths:
         if os.path.exists(path):
@@ -113,44 +147,26 @@ def _load_native_hooks():
 
 def _load_location_hooks():
     """加载定位类 Hook 工具"""
-    location_paths = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frida_location_hooks_new.js'),
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_location_hooks_new.js'),
-        os.path.join(os.path.expanduser('~'), 'fridaproject', 'frida_location_hooks_new.js'),
-        'frida_location_hooks_new.js',
-        './frida_location_hooks_new.js'
-    ]
+    location_paths = _get_possible_paths('frida_location_hooks_new.js')
     
-    location_script_path = None
     for path in location_paths:
         if os.path.exists(path):
-            location_script_path = path
-            break
+            log_debug("找到定位Hook工具: {}".format(path))
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    location_content = f.read()
+                log_debug("定位Hook工具已集成")
+                return '\n\n// ===== Location Hook Tools =====\n' + location_content
+            except Exception as e:
+                log_warning("加载定位Hook工具失败: {}".format(e))
     
-    if location_script_path:
-        log_debug("找到定位Hook工具: {}".format(location_script_path))
-        try:
-            with open(location_script_path, 'r', encoding='utf-8') as f:
-                location_content = f.read()
-            log_debug("定位Hook工具已集成")
-            return '\n\n// ===== Location Hook Tools =====\n' + location_content
-        except Exception as e:
-            log_warning("加载定位Hook工具失败: {}".format(e))
-    else:
-        log_debug("未找到 frida_location_hooks.js，定位工具不可用")
-    
+    log_debug("未找到 frida_location_hooks_new.js，定位工具不可用")
     return ""
 
 def _load_okhttp_logger_plugin():
     """加载 OkHttp Logger 插件 (独立JS)"""
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    candidates = [
-        os.path.join(base_dir, 'frida_okhttp_logger.js'),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frida_okhttp_logger.js'),
-        os.path.join(os.path.expanduser('~'), 'fridaproject', 'frida_okhttp_logger.js'),
-        'frida_okhttp_logger.js',
-        './frida_okhttp_logger.js'
-    ]
+    candidates = _get_possible_paths('frida_okhttp_logger.js')
+    
     for p in candidates:
         if os.path.exists(p):
             try:
@@ -160,33 +176,34 @@ def _load_okhttp_logger_plugin():
                 return '\n\n// ===== OkHttp Logger Plugin =====\n' + content
             except Exception as e:
                 log_warning("加载 OkHttp Logger 插件失败: {}".format(e))
+    
     log_debug("未找到 OkHttp Logger 插件，相关命令将不可用")
     return ""
 
 def _load_advanced_tracer():
     """加载高级追踪工具"""
-    advanced_tracer_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frida_advanced_tracer.js')
+    tracer_paths = _get_possible_paths('frida_advanced_tracer.js')
     
-    if os.path.exists(advanced_tracer_path):
-        try:
-            with open(advanced_tracer_path, 'r', encoding='utf-8') as f:
-                advanced_content = f.read()
-            log_debug("高级追踪工具已集成（基于 r0tracer）")
-            return '\n\n// ===== Advanced Tracer Tools (Based on r0tracer) =====\n' + advanced_content
-        except Exception as e:
-            log_warning("加载高级追踪工具失败: {}".format(e))
-    else:
-        log_debug("未找到 frida_advanced_tracer.js，高级追踪工具不可用")
+    for path in tracer_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    advanced_content = f.read()
+                log_debug("高级追踪工具已集成（基于 r0tracer）: {}".format(path))
+                return '\n\n// ===== Advanced Tracer Tools (Based on r0tracer) =====\n' + advanced_content
+            except Exception as e:
+                log_warning("加载高级追踪工具失败: {}".format(e))
     
+    log_debug("未找到 frida_advanced_tracer.js，高级追踪工具不可用")
     return ""
 
 def _load_custom_scripts(script_path):
     """加载用户自定义脚本"""
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    data_path = _get_data_path()
     
     try:
         # 初始化自定义脚本管理器
-        custom_manager = CustomScriptManager(base_dir)
+        custom_manager = CustomScriptManager(data_path)
         
         # 扫描并加载脚本
         loaded_count = custom_manager.scan_scripts()

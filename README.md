@@ -14,23 +14,46 @@
 
 - Python 3.6.8+ | Frida 14.0.0+ | Rich 10.0.0+ (可选)
 
-## 🚀 快速开始
+## 🚀 安装
+
+### 方式一：pip 安装（推荐）
 
 ```bash
+# 克隆项目
+git clone https://github.com/cxapython/fridac.git
+cd fridac
+
+# 安装（开发模式，支持实时修改）
+pip install -e .
+
+# 或直接安装
+pip install .
+
+# 安装完整依赖（包含 Rich UI）
+pip install -e ".[full]"
+```
+
+安装后，可以在任意目录直接使用 `fridac` 命令：
+
+```bash
+fridac                      # 自动连接前台应用
+fridac -a                   # 选择应用
+fridac -f com.example.app   # Spawn 模式
+fridac -p com.example.app   # 附加模式
+```
+
+### 方式二：直接运行
+
+```bash
+# 克隆项目
+git clone https://github.com/cxapython/fridac.git
+cd fridac
+
 # 安装依赖
 pip install frida>=14.0.0 rich>=10.0.0
 
-# 智能模式 - 自动连接前台应用
+# 直接运行
 python3 fridac
-
-# 选择应用
-python3 fridac -a
-
-# 启动模式
-python3 fridac -f com.example.app
-
-# 附加模式
-python3 fridac -p com.example.app
 ```
 
 ## 🎯 常用命令
