@@ -237,6 +237,7 @@ function classsearch(pattern) {
 }
 
 function objectsearch(className, limit) {
+    var result = {};  // wallbreaker 风格：用 handle 作为 key 自动去重
     var items = [];
     var count = 0;
     var max = (typeof limit === 'number' && limit > 0) ? limit : 9999;
@@ -244,14 +245,16 @@ function objectsearch(className, limit) {
     LOG('🔍 搜索对象实例: ' + className, { c: Color.Cyan });
     
     Java.perform(function() {
+        // 方式1：使用默认 Java.choose（与 wallbreaker 完全相同）
         Java.choose(className, {
             onComplete: function() {},
             onMatch: function(instance) {
                 if (count >= max) return 'stop';
                 
                 var handle = __getHandle(instance);
-                if (handle != null) {
+                if (handle != null && !result.hasOwnProperty(handle)) {
                     var preview = __objectToStr(instance);
+                    result[handle] = preview;
                     LOG('[' + handle + ']: ' + preview, { c: Color.White });
                     items.push({ id: handle, className: className, preview: preview });
                     count++;
@@ -264,6 +267,24 @@ function objectsearch(className, limit) {
     
     LOG('✅ 共找到 ' + count + ' 个对象实例 (使用 objectdump("<handle>") 查看详情)', { c: Color.Green });
     return items;
+}
+
+// wallbreaker 风格的对象搜索（返回字典格式，与 wallbreaker RPC 完全兼容）
+function objectSearchWallbreaker(className, stop) {
+    var result = {};
+    Java.perform(function() {
+        Java.choose(className, {
+            onComplete: function() {},
+            onMatch: function(instance) {
+                var handle = __getHandle(instance);
+                if (handle != null) {
+                    result[handle] = __objectToStr(instance);
+                }
+                if (stop) return 'stop';
+            }
+        });
+    });
+    return result;
 }
 
 function classdump(className, fullname) {
@@ -2897,6 +2918,7 @@ global.fetch = fetch;
 // 类和对象搜索
 global.classsearch = classsearch;
 global.objectsearch = objectsearch;
+global.objectSearchWallbreaker = objectSearchWallbreaker;  // wallbreaker 兼容版本
 global.classdump = classdump;
 global.objectdump = objectdump;
 // Wallbreaker 风格对象查看器

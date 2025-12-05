@@ -477,6 +477,234 @@ class FridacSession:
             log_error("连接失败: {}".format(e))
             return False
     
+    def load_wallbreaker(self):
+        """加载 wallbreaker 插件（用于对象搜索）"""
+        wallbreaker_path = os.path.expanduser("~/.objection/plugins/wallbreaker/agent/_agent.js")
+        if not os.path.exists(wallbreaker_path):
+            return None
+        
+        try:
+            with open(wallbreaker_path, 'r', encoding='utf-8') as f:
+                wb_script = f.read()
+            
+            self.wallbreaker_script = self.target_process.create_script(wb_script)
+            self.wallbreaker_script.load()
+            self.wallbreaker_rpc = self.wallbreaker_script.exports
+            log_debug("Wallbreaker 插件已加载")
+            return self.wallbreaker_rpc
+        except Exception as e:
+            log_debug(f"加载 wallbreaker 失败: {e}")
+            return None
+    
+    def _ensure_wallbreaker(self):
+        """确保 wallbreaker 已加载（内部方法）"""
+        if not hasattr(self, 'wallbreaker_rpc'):
+            self.wallbreaker_rpc = None
+        if not self.wallbreaker_rpc:
+            self.wallbreaker_rpc = self.load_wallbreaker()
+        return self.wallbreaker_rpc
+    
+    def objectsearch(self, class_name, stop=False):
+        """
+        搜索堆中的对象实例
+        优先使用 wallbreaker（如果可用），否则降级到 JavaScript 版本
+        """
+        self._ensure_wallbreaker()
+        
+        # 优先使用 wallbreaker
+        if self.wallbreaker_rpc:
+            try:
+                log_info(f"🔍 搜索对象实例 (wallbreaker): {class_name}")
+                result = self.wallbreaker_rpc.object_search(class_name, stop)
+                for handle, preview in result.items():
+                    log_info(f"[{handle}]: {preview}")
+                log_success(f"✅ 共找到 {len(result)} 个对象实例")
+                return result
+            except Exception as e:
+                log_warning(f"Wallbreaker 搜索失败，降级到 JS 版本: {e}")
+        
+        # 降级到 JavaScript 版本
+        log_info(f"🔍 搜索对象实例 (JS): {class_name}")
+        try:
+            js_code = f'objectsearch("{class_name}")'
+            result = self.script.exports.eval(js_code)
+            return result if result else []
+        except Exception as e:
+            log_error(f"搜索失败: {e}")
+            return []
+    
+    def objectdump(self, handle, fullname=False):
+        """
+        查看对象的详细信息（字段值等）
+        优先使用 wallbreaker，降级到 JavaScript 版本
+        """
+        self._ensure_wallbreaker()
+        
+        # 优先使用 wallbreaker
+        if self.wallbreaker_rpc:
+            try:
+                # wallbreaker 的 objectdump 需要先获取类名，再 dump
+                class_name = self.wallbreaker_rpc.object_get_class(str(handle))
+                if class_name:
+                    log_info(f"📦 对象详情 (wallbreaker): {handle}")
+                    # 获取类结构
+                    import json
+                    class_info = json.loads(self.wallbreaker_rpc.class_use(class_name))
+                    
+                    # 打印类名
+                    log_info(f"📘 Class: {class_info.get('name', class_name)}")
+                    
+                    # 打印静态字段
+                    static_fields = class_info.get('staticFields', {})
+                    if static_fields:
+                        log_info("  /* static fields */")
+                        for name, fields in static_fields.items():
+                            for field in fields:
+                                field_type = field.get('type', 'unknown')
+                                value = self.wallbreaker_rpc.object_get_field(str(handle), name)
+                                log_info(f"    {field_type} {name} = {value}")
+                    
+                    # 打印实例字段
+                    instance_fields = class_info.get('instanceFields', {})
+                    if instance_fields:
+                        log_info("  /* instance fields */")
+                        for name, fields in instance_fields.items():
+                            for field in fields:
+                                field_type = field.get('type', 'unknown')
+                                value = self.wallbreaker_rpc.object_get_field(str(handle), name)
+                                log_info(f"    {field_type} {name} = {value}")
+                    
+                    return class_info
+            except Exception as e:
+                log_warning(f"Wallbreaker dump 失败，降级到 JS 版本: {e}")
+        
+        # 降级到 JavaScript 版本
+        log_info(f"📦 对象详情 (JS): {handle}")
+        try:
+            fullname_str = 'true' if fullname else 'false'
+            js_code = f'objectdump("{handle}", {fullname_str})'
+            result = self.script.exports.eval(js_code)
+            return result
+        except Exception as e:
+            log_error(f"Dump 失败: {e}")
+            return None
+    
+    def classdump(self, class_name, fullname=False):
+        """
+        查看类的结构（方法、字段等）
+        优先使用 wallbreaker，降级到 JavaScript 版本
+        """
+        self._ensure_wallbreaker()
+        
+        # 优先使用 wallbreaker
+        if self.wallbreaker_rpc:
+            try:
+                import json
+                log_info(f"📘 类结构 (wallbreaker): {class_name}")
+                class_info = json.loads(self.wallbreaker_rpc.class_use(class_name))
+                
+                # 格式化输出
+                name = class_info.get('name', class_name)
+                super_class = class_info.get('super', '')
+                
+                # 打印包名和类名
+                if '.' in name:
+                    pkg = name[:name.rindex('.')]
+                    short_name = name[name.rindex('.') + 1:]
+                    log_info(f"package {pkg};")
+                    log_info(f"class {short_name} extends {super_class} {{")
+                else:
+                    log_info(f"class {name} extends {super_class} {{")
+                
+                # 静态字段
+                static_fields = class_info.get('staticFields', {})
+                if static_fields:
+                    log_info("  /* static fields */")
+                    for name, fields in static_fields.items():
+                        for field in fields:
+                            log_info(f"    static {field.get('type', '?')} {name};")
+                
+                # 实例字段
+                instance_fields = class_info.get('instanceFields', {})
+                if instance_fields:
+                    log_info("  /* instance fields */")
+                    for name, fields in instance_fields.items():
+                        for field in fields:
+                            log_info(f"    {field.get('type', '?')} {name};")
+                
+                # 构造方法
+                constructors = class_info.get('constructors', [])
+                if constructors:
+                    log_info("  /* constructors */")
+                    for ctor in constructors:
+                        args = ', '.join(ctor.get('arguments', []))
+                        log_info(f"    {ctor.get('name', '<init>')}({args});")
+                
+                # 静态方法
+                static_methods = class_info.get('staticMethods', {})
+                if static_methods:
+                    log_info("  /* static methods */")
+                    for name, methods in static_methods.items():
+                        for method in methods:
+                            args = ', '.join(method.get('arguments', []))
+                            ret = method.get('retType', 'void')
+                            log_info(f"    static {ret} {name}({args});")
+                
+                # 实例方法
+                instance_methods = class_info.get('instanceMethods', {})
+                if instance_methods:
+                    log_info("  /* instance methods */")
+                    for name, methods in instance_methods.items():
+                        for method in methods:
+                            args = ', '.join(method.get('arguments', []))
+                            ret = method.get('retType', 'void')
+                            log_info(f"    {ret} {name}({args});")
+                
+                log_info("}")
+                return class_info
+            except Exception as e:
+                log_warning(f"Wallbreaker classdump 失败，降级到 JS 版本: {e}")
+        
+        # 降级到 JavaScript 版本
+        log_info(f"📘 类结构 (JS): {class_name}")
+        try:
+            fullname_str = 'true' if fullname else 'false'
+            js_code = f'classdump("{class_name}", {fullname_str})'
+            result = self.script.exports.eval(js_code)
+            return result
+        except Exception as e:
+            log_error(f"Classdump 失败: {e}")
+            return None
+    
+    def classsearch(self, pattern):
+        """
+        搜索匹配的类名
+        优先使用 wallbreaker，降级到 JavaScript 版本
+        """
+        self._ensure_wallbreaker()
+        
+        # 优先使用 wallbreaker
+        if self.wallbreaker_rpc:
+            try:
+                log_info(f"🔍 搜索类 (wallbreaker): {pattern}")
+                result = self.wallbreaker_rpc.class_match(pattern)
+                for cls in result:
+                    log_info(f"  {cls}")
+                log_success(f"✅ 共找到 {len(result)} 个类")
+                return result
+            except Exception as e:
+                log_warning(f"Wallbreaker 搜索失败，降级到 JS 版本: {e}")
+        
+        # 降级到 JavaScript 版本
+        log_info(f"🔍 搜索类 (JS): {pattern}")
+        try:
+            js_code = f'findClasses("{pattern}")'
+            result = self.script.exports.eval(js_code)
+            return result if result else []
+        except Exception as e:
+            log_error(f"搜索失败: {e}")
+            return []
+    
     def execute_js(self, js_code):
         """执行 JavaScript 代码（包含增强的错误处理）"""
         if not self.script:
@@ -1333,6 +1561,42 @@ def _handle_task_commands(session, user_input):
     # 自定义脚本重载命令
     elif cmd in ['reload_scripts', 'reloadscripts']:
         _handle_reload_scripts()
+        return True
+    
+    # === 内存搜索命令（优先 wallbreaker，降级 JS）===
+    elif cmd == 'objectsearch':
+        if len(parts) < 2:
+            log_error("❌ 用法: objectsearch <class_name> [stop]")
+            return True
+        class_name = parts[1]
+        stop = len(parts) > 2 and parts[2].lower() in ['true', '1', 'yes']
+        session.objectsearch(class_name, stop)
+        return True
+    
+    elif cmd == 'objectdump':
+        if len(parts) < 2:
+            log_error("❌ 用法: objectdump <handle> [fullname]")
+            return True
+        handle = parts[1]
+        fullname = len(parts) > 2 and parts[2].lower() in ['true', '1', 'yes', 'fullname', '--fullname']
+        session.objectdump(handle, fullname)
+        return True
+    
+    elif cmd == 'classdump':
+        if len(parts) < 2:
+            log_error("❌ 用法: classdump <class_name> [fullname]")
+            return True
+        class_name = parts[1]
+        fullname = len(parts) > 2 and parts[2].lower() in ['true', '1', 'yes', 'fullname', '--fullname']
+        session.classdump(class_name, fullname)
+        return True
+    
+    elif cmd == 'classsearch':
+        if len(parts) < 2:
+            log_error("❌ 用法: classsearch <pattern>")
+            return True
+        pattern = parts[1]
+        session.classsearch(pattern)
         return True
     
     # 检查是否是自定义函数命令

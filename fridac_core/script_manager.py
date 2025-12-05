@@ -504,6 +504,11 @@ rpc.exports = {
     printStack: printStack,
     findTragetClassLoader: findTragetClassLoader,
     findStrInMap: findStrInMap,
+    
+    // 对象搜索函数（类似 wallbreaker）
+    objectsearch: typeof objectsearch !== 'undefined' ? objectsearch : function() { LOG("objectsearch 未加载", { c: Color.Yellow }); },
+    objectdump: typeof objectdump !== 'undefined' ? objectdump : function() { LOG("objectdump 未加载", { c: Color.Yellow }); },
+    classdump: typeof classdump !== 'undefined' ? classdump : function() { LOG("classdump 未加载", { c: Color.Yellow }); },
     // OkHttp Logger (条件导出)
     okhttpfind: (typeof okhttpFind !== 'undefined') ? okhttpFind : function(){ LOG("okhttpFind 需要 frida_common_new.js 中的OkHttp功能", { c: Color.Yellow }); },
     okhttpswitchloader: (typeof okhttpSwitchLoader !== 'undefined') ? okhttpSwitchLoader : function(){ LOG("okhttpSwitchLoader 需要 frida_common_new.js 中的OkHttp功能", { c: Color.Yellow }); },

@@ -98,17 +98,33 @@ python3 fridac
 | `findClasses('pattern')` | 查找匹配的类 |
 | `classdump('类名')` | 查看类的完整结构 |
 
-### 对象搜索与深度查看（Wallbreaker-style）
+### 对象搜索与深度查看（Wallbreaker 集成）
 
 | 命令 | 说明 |
 |------|------|
-| `objectsearch('类名')` | 搜索类的实例对象，返回句柄 ID |
-| `objectdump(句柄ID)` | 查看对象完整信息（字段、方法、构造器） |
-| `objectview(句柄ID)` | 精美格式查看对象（含类继承链） |
-| `objectfields(句柄ID)` | 获取对象所有字段列表 |
-| `objectrefresh(句柄ID)` | 刷新对象当前字段值 |
+| `objectsearch <类名>` | 搜索类的实例对象，返回句柄 ID |
+| `objectdump <句柄ID>` | 查看对象完整信息（字段值） |
+| `classdump <类名>` | 查看类结构（方法、字段、构造器） |
+| `classsearch <pattern>` | 搜索匹配的类名 |
 
-> 💡 **深度对象遍历**：`objectdump` 会自动注册字段中的对象引用，显示为 `<ClassName@句柄ID>` 格式，可继续用 `objectdump(新ID)` 深入查看，实现类似 Objection Wallbreaker 的对象遍历功能。
+> 💡 **智能降级机制**：优先使用 [Wallbreaker](https://github.com/nickcano/Wallbreaker) 插件（需安装到 `~/.objection/plugins/wallbreaker/`），若不可用自动降级到内置 JavaScript 版本。Wallbreaker 版本在堆搜索方面更强大。
+>
+> 安装 Wallbreaker：`git clone https://github.com/nickcano/Wallbreaker ~/.objection/plugins/wallbreaker`
+
+**深度对象遍历示例**：
+```bash
+fridac> objectsearch com.example.User    # 搜索 User 类实例
+[0x107aa]: com.example.User@b9a78dc
+[0x1077a]: com.example.User@7c0ade5
+
+fridac> objectdump 0x107aa               # 查看对象详情
+📦 对象详情: 0x107aa
+  String name = "张三"
+  int age = 25
+  [0x108bb]: com.example.Address@...     # 嵌套对象可继续查看
+
+fridac> objectdump 0x108bb               # 深入查看嵌套对象
+```
 
 ### 接口/继承查找
 
