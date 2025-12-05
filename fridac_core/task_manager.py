@@ -1,7 +1,6 @@
 """
 fridacli 多脚本任务管理器
 基于 Frida Script 隔离的真正任务管理实现
-参考 objection 的 attach_script 机制
 """
 
 import time

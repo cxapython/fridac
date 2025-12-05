@@ -34,7 +34,7 @@ from .script_manager import create_frida_script, get_custom_script_manager
 from .task_manager import FridaTaskManager, TaskType, TaskStatus
 from .script_templates import ScriptTemplateEngine
 
-# prompt_toolkit 支持（objection 风格内联提示）
+# prompt_toolkit 支持(内联提示）
 try:
     from .completer import create_prompt_session, PROMPT_TOOLKIT_AVAILABLE
 except ImportError:
@@ -721,7 +721,7 @@ def run_interactive_session(session):
     """运行交互式会话主循环"""
     console = get_console()
     
-    # 检测是否可以使用 prompt_toolkit（objection 风格）
+    # 检测是否可以使用 prompt_toolkit
     use_prompt_toolkit = False
     pt_session = None
     completer = FridacCompleter()
@@ -736,7 +736,7 @@ def run_interactive_session(session):
             # 使用单独的历史文件（prompt_toolkit 格式与 readline 不兼容）
             pt_session = create_prompt_session(completer, PT_HISTORY_FILE)
             use_prompt_toolkit = True
-            log_info("✨ 已启用 objection 风格内联提示（↑↓翻历史，Tab补全，Ctrl+R搜索）")
+            log_info("✨ 已启用 内联提示（↑↓翻历史，Tab补全，Ctrl+R搜索）")
         except Exception as e:
             log_debug(f"prompt_toolkit 初始化失败，回退到 readline: {e}")
             use_prompt_toolkit = False

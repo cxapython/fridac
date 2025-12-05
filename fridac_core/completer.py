@@ -1,6 +1,6 @@
 """
 fridac 自动补全系统模块
-提供智能补全和 objection 风格的内联灰色提示功能
+提供智能补全和 内联灰色提示功能
 """
 
 import readline
@@ -14,7 +14,7 @@ try:
 except ImportError:
     RICH_AVAILABLE = False
 
-# prompt_toolkit 支持（objection 风格内联提示）
+# prompt_toolkit 支持(内联提示）
 try:
     from prompt_toolkit import prompt as pt_prompt
     from prompt_toolkit.history import FileHistory, InMemoryHistory
@@ -203,13 +203,13 @@ class FridacCompleter:
             return None
 
 
-# ==================== prompt_toolkit 版本（objection 风格）====================
+# ==================== prompt_toolkit 版本====================
 
 if PROMPT_TOOLKIT_AVAILABLE:
     
     class FridacAutoSuggest(AutoSuggest):
         """
-        objection 风格的内联灰色提示
+       内联灰色提示
         基于已有命令和历史记录提供建议
         """
         
@@ -305,7 +305,7 @@ if PROMPT_TOOLKIT_AVAILABLE:
                             )
 
 
-    # prompt_toolkit 样式（类似 objection）
+    # prompt_toolkit 样式
     FRIDAC_STYLE = Style.from_dict({
         # 提示符颜色
         'prompt': '#00aa00 bold',

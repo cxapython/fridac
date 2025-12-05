@@ -426,7 +426,7 @@ function help() {
         LOG("  nativeEnableAntiDebugBypass(options) - 反调试绕过（ptrace/TracerPid）", { c: Color.White });
     }
     
-    LOG("\\n📋 任务管理系统 (参考 objection):", { c: Color.Red });
+    LOG("\\n📋 任务管理系统:", { c: Color.Red });
     LOG("  jobs() - 显示所有活跃的Hook任务", { c: Color.White });
     LOG("  job(id) - 显示指定任务的详细信息", { c: Color.White });
     LOG("  kill(id) - 取消指定的Hook任务", { c: Color.White });
