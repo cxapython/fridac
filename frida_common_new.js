@@ -37,24 +37,99 @@ function LOG(message, options) {
     }
 }
 
-// ===== 对象注册表与通用格式化 =====
+// ===== 对象注册表与通用格式化（Wallbreaker 风格实现） =====
 var __obj_registry = { byId: {}, order: [], max: 500 };
 
+/**
+ * 获取对象句柄（Wallbreaker 核心：使用 Java.retain + $handle/$h）
+ */
+function __getHandle(object) {
+    try {
+        object = Java.retain(object);
+        var handle = null;
+        
+        // 优先使用 $handle（新版 Frida）
+        if (object.hasOwnProperty('$handle') && object.$handle != undefined) {
+            handle = object.$handle;
+        }
+        // 其次使用 $h（兼容旧版）
+        else if (object.hasOwnProperty('$h') && object.$h != undefined) {
+            handle = object.$h;
+        }
+        // 最后使用 hashCode
+        else {
+            handle = Java.use("java.lang.Object").hashCode.apply(object);
+        }
+        
+        if (handle != null) {
+            var handleStr = (typeof handle === 'object') ? handle.toString() : String(handle);
+            var className = '';
+            try { className = String(object.getClass().getName()); } catch (_) { try { className = object.$className || ''; } catch(__) {} }
+            __obj_registry.byId[handleStr] = { obj: object, className: className, time: Date.now() };
+            __obj_registry.order.push(handleStr);
+            if (__obj_registry.order.length > __obj_registry.max) {
+                var removed = __obj_registry.order.shift();
+                try { delete __obj_registry.byId[removed]; } catch (_) {}
+            }
+            return handleStr;
+        }
+        return null;
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * 通过句柄获取对象
+ */
+function __getObjectByHandle(handle) {
+    var handleStr = String(handle);
+    
+    // 先从缓存查找
+    if (__obj_registry.byId.hasOwnProperty(handleStr)) {
+        return __obj_registry.byId[handleStr].obj;
+    }
+    
+    // 尝试通过指针转换（兼容十六进制句柄）
+    if (handleStr.startsWith('0x')) {
+        var origClassName = null;
+        var resultObj = null;
+        Java.perform(function() {
+            try {
+                var obj = Java.use("java.lang.Object");
+                var jObject = Java.cast(ptr(handleStr), obj);
+                var objClass = obj.getClass.apply(jObject);
+                origClassName = Java.use("java.lang.Class").getName.apply(objClass);
+                if (origClassName) {
+                    resultObj = Java.cast(ptr(handleStr), Java.use(origClassName));
+                    resultObj = Java.retain(resultObj);
+                    __obj_registry.byId[handleStr] = { obj: resultObj, className: origClassName, time: Date.now() };
+                }
+            } catch (e) {}
+        });
+        return resultObj;
+    }
+    
+    return null;
+}
+
+/**
+ * 对象转字符串
+ */
+function __objectToStr(object) {
+    try {
+        return Java.use("java.lang.Object").toString.apply(object);
+    } catch (e) {
+        return "" + object;
+    }
+}
+
+/**
+ * 注册对象并返回句柄（兼容旧 API）
+ */
 function __registerObject(obj) {
     try {
-        var System = Java.use('java.lang.System');
-        var idInt = 0;
-        try { idInt = System.identityHashCode(obj); } catch (_) { idInt = Math.floor(Math.random() * 1e9); }
-        var key = String(idInt);
-        var className = '';
-        try { className = String(obj.getClass().getName()); } catch (_) { try { className = obj.$className || ''; } catch(__) {} }
-        __obj_registry.byId[key] = { obj: obj, className: className, time: Date.now() };
-        __obj_registry.order.push(key);
-        if (__obj_registry.order.length > __obj_registry.max) {
-            var removed = __obj_registry.order.shift();
-            try { delete __obj_registry.byId[removed]; } catch (_) {}
-        }
-        return key;
+        return __getHandle(obj);
     } catch (e) {
         try { LOG('⚠️ 注册对象失败: ' + e.message, { c: Color.Yellow }); } catch (_) {}
         return null;
@@ -162,86 +237,33 @@ function classsearch(pattern) {
 }
 
 function objectsearch(className, limit) {
-    try {
-        var max = (typeof limit === 'number' && limit > 0) ? limit : 50;
-        var found = 0;
-        var items = [];
-        LOG('🔍 搜索对象实例: ' + className + ' (limit=' + max + ')', { c: Color.Cyan });
-        Java.perform(function() {
-            try {
-                // 先在默认 ClassLoader 下验证类是否可用（避免 choose 直接抛异常）
-                var prepared = false;
-                try {
-                    var _tmp = Java.use(className);
-                    if (_tmp && _tmp.class) {
-                        LOG('----- default ClassLoader -----', { c: Color.Cyan });
-                        prepared = true;
-                    }
-                } catch (_) { prepared = false; }
-
-                var usingLoader = null;
-                var oldLoader = null;
-                if (!prepared) {
-                    LOG('----- default ClassLoader: not found, searching other dex -----', { c: Color.Yellow });
-                    try {
-                        var loader = (typeof findTragetClassLoader === 'function') ? findTragetClassLoader(className) : null;
-                        if (loader) {
-                            try {
-                                var factory = Java.ClassFactory.get(loader);
-                                factory.use(className); // 尝试在该 loader 下加载类
-                                oldLoader = (function(){ try { return Java.classFactory.loader; } catch(_) { return null; } })();
-                                try { Java.classFactory.loader = loader; } catch(_) {}
-                                usingLoader = loader;
-                                LOG('----- custom ClassLoader -----', { c: Color.Cyan });
-                                prepared = true;
-                            } catch (eLoad) {
-                                LOG('❌ 在自定义ClassLoader中加载失败: ' + eLoad.message, { c: Color.Red });
-                            }
-                        } else {
-                            LOG('❌ 未在其他ClassLoader中找到类: ' + className, { c: Color.Red });
-                        }
-                    } catch (eFind) {
-                        LOG('❌ 搜索其他ClassLoader失败: ' + eFind.message, { c: Color.Red });
-                    }
+    var items = [];
+    var count = 0;
+    var max = (typeof limit === 'number' && limit > 0) ? limit : 9999;
+    
+    LOG('🔍 搜索对象实例: ' + className, { c: Color.Cyan });
+    
+    Java.perform(function() {
+        Java.choose(className, {
+            onComplete: function() {},
+            onMatch: function(instance) {
+                if (count >= max) return 'stop';
+                
+                var handle = __getHandle(instance);
+                if (handle != null) {
+                    var preview = __objectToStr(instance);
+                    LOG('[' + handle + ']: ' + preview, { c: Color.White });
+                    items.push({ id: handle, className: className, preview: preview });
+                    count++;
                 }
-
-                if (!prepared) {
-                    // 两种 ClassLoader 都无法加载该类，直接返回避免 choose 抛错
-                    return;
-                }
-
-                try {
-                    Java.choose(className, {
-                        onMatch: function(instance) {
-                            try {
-                                if (found >= max) return;
-                                var id = __registerObject(instance);
-                                var cls = '';
-                                try { cls = String(instance.getClass().getName()); } catch (_) { try { cls = instance.$className || ''; } catch(__){} }
-                                var preview = '';
-                                try { preview = __safeToString(instance.toString()); } catch (_) { preview = '<toString() failed>'; }
-                                LOG('🧩 #' + id + '  ' + cls + '  -> ' + preview, { c: Color.White });
-                                items.push({ id: id, className: cls, preview: preview });
-                                found++;
-                            } catch (_) {}
-                        },
-                        onComplete: function() {}
-                    });
-                } finally {
-                    if (usingLoader) {
-                        try { Java.classFactory.loader = oldLoader; } catch(_) {}
-                    }
-                }
-            } catch (e2) {
-                LOG('❌ objectsearch 失败: ' + e2.message, { c: Color.Red });
+                
+                if (count >= max) return 'stop';
             }
         });
-        LOG('✅ 共记录 ' + items.length + ' 个对象句柄 (使用 objectdump(<id>) 查看详情)', { c: Color.Blue });
-        return items;
-    } catch (e) {
-        LOG('❌ objectsearch 失败: ' + e.message, { c: Color.Red });
-        return [];
-    }
+    });
+    
+    LOG('✅ 共找到 ' + count + ' 个对象实例 (使用 objectdump("<handle>") 查看详情)', { c: Color.Green });
+    return items;
 }
 
 function classdump(className, fullname) {
@@ -360,11 +382,10 @@ function objectdump(handle, fullname) {
     fullname = (fullname === false) ? false : true;
     try {
         var id = String(handle);
-        var entry = __obj_registry.byId[id];
-        if (!entry || !entry.obj) { LOG('❌ 未找到对象句柄 #' + id + '，请先执行 objectsearch()', { c: Color.Red }); return false; }
+        var obj = __getObjectByHandle(id);
+        if (!obj) { LOG('❌ 未找到对象句柄 ' + id + '，请先执行 objectsearch()', { c: Color.Red }); return false; }
         Java.perform(function() {
             try {
-                var obj = entry.obj;
                 var clazz = obj.getClass ? obj.getClass() : (obj.class ? obj.class : null);
                 var className = '';
                 try { className = clazz ? String(clazz.getName()) : (obj.$className || 'Object'); } catch(_) { className = obj.$className || 'Object'; }
@@ -644,15 +665,14 @@ function objectview(handle, options) {
     
     try {
         var id = String(handle);
-        var entry = __obj_registry.byId[id];
-        if (!entry || !entry.obj) {
-            LOG('❌ 未找到对象句柄 #' + id + '，请先执行 objectsearch()', { c: Color.Red });
+        var obj = __getObjectByHandle(id);
+        if (!obj) {
+            LOG('❌ 未找到对象句柄 ' + id + '，请先执行 objectsearch()', { c: Color.Red });
             return false;
         }
         
         Java.perform(function() {
             try {
-                var obj = entry.obj;
                 var clazz = obj.getClass ? obj.getClass() : (obj.class ? obj.class : null);
                 var className = '';
                 try { className = clazz ? String(clazz.getName()) : (obj.$className || 'Object'); } catch(_) { className = 'Object'; }
@@ -660,7 +680,7 @@ function objectview(handle, options) {
                 // 标题
                 LOG('', { c: Color.White });
                 LOG('╔══════════════════════════════════════════════════════════════', { c: Color.Cyan });
-                LOG('║ 📦 Object #' + id + ' <' + className + '>', { c: Color.Cyan });
+                LOG('║ 📦 Object ' + id + ' <' + className + '>', { c: Color.Cyan });
                 LOG('╠══════════════════════════════════════════════════════════════', { c: Color.Cyan });
                 
                 // 类层次结构
@@ -781,16 +801,15 @@ function objectfields(handle, fullname) {
     fullname = !!fullname;
     try {
         var id = String(handle);
-        var entry = __obj_registry.byId[id];
-        if (!entry || !entry.obj) {
-            LOG('❌ 未找到对象句柄 #' + id + '，请先执行 objectsearch()', { c: Color.Red });
+        var obj = __getObjectByHandle(id);
+        if (!obj) {
+            LOG('❌ 未找到对象句柄 ' + id + '，请先执行 objectsearch()', { c: Color.Red });
             return [];
         }
         
         var result = [];
         Java.perform(function() {
             try {
-                var obj = entry.obj;
                 var clazz = obj.getClass();
                 var allFields = __getAllFields(clazz);
                 var Modifier = Java.use('java.lang.reflect.Modifier');
@@ -834,12 +853,12 @@ function objectfields(handle, fullname) {
 function objectrefresh(handle) {
     try {
         var id = String(handle);
-        var entry = __obj_registry.byId[id];
-        if (!entry || !entry.obj) {
-            LOG('❌ 未找到对象句柄 #' + id, { c: Color.Red });
+        var obj = __getObjectByHandle(id);
+        if (!obj) {
+            LOG('❌ 未找到对象句柄 ' + id, { c: Color.Red });
             return false;
         }
-        LOG('🔄 刷新对象 #' + id + ' 的字段值...', { c: Color.Cyan });
+        LOG('🔄 刷新对象 ' + id + ' 的字段值...', { c: Color.Cyan });
         return objectview(handle, { showInherited: true, showStatic: true });
     } catch (e) {
         LOG('❌ objectrefresh 失败: ' + e.message, { c: Color.Red });
@@ -853,16 +872,15 @@ function objectrefresh(handle) {
 function objectexpand(handle, fieldName) {
     try {
         var id = String(handle);
-        var entry = __obj_registry.byId[id];
-        if (!entry || !entry.obj) {
-            LOG('❌ 未找到对象句柄 #' + id, { c: Color.Red });
+        var obj = __getObjectByHandle(id);
+        if (!obj) {
+            LOG('❌ 未找到对象句柄 ' + id, { c: Color.Red });
             return null;
         }
         
         var result = null;
         Java.perform(function() {
             try {
-                var obj = entry.obj;
                 var clazz = obj.getClass();
                 var allFields = __getAllFields(clazz);
                 var found = false;
@@ -919,16 +937,15 @@ function objectlist(handle, limit) {
     limit = (typeof limit === 'number' && limit > 0) ? limit : 20;
     try {
         var id = String(handle);
-        var entry = __obj_registry.byId[id];
-        if (!entry || !entry.obj) {
-            LOG('❌ 未找到对象句柄 #' + id, { c: Color.Red });
+        var obj = __getObjectByHandle(id);
+        if (!obj) {
+            LOG('❌ 未找到对象句柄 ' + id, { c: Color.Red });
             return [];
         }
         
         var items = [];
         Java.perform(function() {
             try {
-                var obj = entry.obj;
                 var className = String(obj.getClass().getName());
                 
                 // 检查是否是集合类型
@@ -984,16 +1001,15 @@ function objectmap(handle, limit) {
     limit = (typeof limit === 'number' && limit > 0) ? limit : 20;
     try {
         var id = String(handle);
-        var entry = __obj_registry.byId[id];
-        if (!entry || !entry.obj) {
-            LOG('❌ 未找到对象句柄 #' + id, { c: Color.Red });
+        var obj = __getObjectByHandle(id);
+        if (!obj) {
+            LOG('❌ 未找到对象句柄 ' + id, { c: Color.Red });
             return [];
         }
         
         var items = [];
         Java.perform(function() {
             try {
-                var obj = entry.obj;
                 var className = String(obj.getClass().getName());
                 
                 // 检查是否是 Map 类型
