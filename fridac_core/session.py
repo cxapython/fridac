@@ -1477,72 +1477,41 @@ def _show_rich_interactive_info():
     console = get_console()
     if not console:
         return
-        
-    # 彩色“可用函数”总览（三列：函数名/描述/使用示例）
-    table = Table(title="🚀 可用函数", box=ROUNDED, show_header=True, header_style="bold magenta")
-    table.add_column("函数名", style="cyan", width=28)
-    table.add_column("描述", style="green", width=36)
-    table.add_column("使用示例", style="yellow", width=60)
+    
+    from rich.panel import Panel
+    
+    # 简洁的欢迎信息
+    welcome_text = """[bold cyan]🎯 fridac 交互模式[/bold cyan]
 
-    comp = FridacCompleter()
-    # 组装行：从补全词典获取函数 → (描述, 示例)
-    preferred_order = [
-        # 核心追踪功能
-        'traceClass', 'traceMethod', 'advancedMethodTracing',
-        # 类和对象搜索
-        'findClasses', 'enumAllClasses', 'classsearch', 'objectsearch',
-        # 对象分析
-        'classdump', 'objectdump', 'printJavaCallStack',
-        # 网络抓包
-        'fetch', 'okhttpStart', 'okhttpFind', 'okhttpHold', 'okhttpHistory', 'okhttpResend', 'okhttpClear',
-        # Hook 任务命令
-        'hookbase64', 'hooktoast', 'hookurl', 'hookhashmap', 'hookjsonobject', 
-        'hookarraylist', 'hooklog', 'hookedittext', 'hookloadlibrary', 
-        'hooknewstringutf', 'hookfileoperations', 'hookfetch',
-        # 任务管理命令
-        'tasks', 'taskinfo', 'taskstats', 'kill', 'killall',
-        # Native Hook
-        'nativeEnableAllHooks', 'nativeHookDlopen', 'nativeHookCrypto', 
-        'nativeHookNetwork', 'nativeHookFile', 'nativeHookAntiDebug',
-        'nativeFindModules', 'nativeFindExports', 'nativeFindImports'
-    ]
-    added = set()
-    for name in preferred_order:
-        if name in comp.functions and name not in added:
-            desc, example = comp.functions[name]
-            table.add_row(f"[cyan]{name}()[/cyan]" if not name.startswith('hook') and not name.startswith('task') and not name.startswith('kill') else f"[cyan]{name}[/cyan]", desc, example)
-            added.add(name)
-    # 其余函数补齐
-    for name, (desc, example) in comp.functions.items():
-        if name not in added:
-            table.add_row(f"[cyan]{name}[/cyan]", desc, example)
+[green]快捷操作:[/green]
+  [yellow]Tab[/yellow]      补全命令        [yellow]↑↓[/yellow]       翻历史
+  [yellow]Ctrl+R[/yellow]   搜索历史        [yellow]→[/yellow]        接受建议
 
-    console.print()
-    console.print(table)
-    console.print()
+[green]常用命令:[/green]
+  [cyan]traceClass[/cyan]('类名', 1)         跟踪类的所有方法
+  [cyan]traceMethod[/cyan]('类.方法', 1)     跟踪特定方法
+  [cyan]findClasses[/cyan]('关键字')         搜索类
+  [cyan]tasks[/cyan] / [cyan]kill[/cyan] <id> / [cyan]killall[/cyan]   任务管理
+
+[green]帮助:[/green]
+  [cyan]help()[/cyan]       查看所有函数    [cyan]taskhelp[/cyan]    任务命令帮助
+  [cyan]q[/cyan] / [cyan]exit[/cyan]    退出程序"""
+    
+    console.print(Panel(welcome_text, border_style="green", padding=(0, 1)))
 
 def _show_basic_interactive_info():
     """Show interactive information in basic mode"""
-    print("\n" + "="*60)
-    print("🎯 进入交互模式 - 智能补全已启用")
-    print("💡 使用 Tab 键自动补全函数名和类名")
-    print("📝 可以直接调用 JS 函数，例如:")
-    print("   traceClass('com.example.MainActivity', 1)  // 1=显示调用栈")
-    print("   traceMethod('com.example.Class.method', 1, 30)  // 显示30行调用栈")
-    print("   advancedMethodTracing('com.example.Class.method', true, true)")
-    print("   findClasses('MainActivity', true)")
-    print("   classdump('com.example.Class')")
-    print("   fetch('keyword')  # 网络抓包")
-    print("   okhttpStart()  # OkHttp日志")
-    print("📋 任务管理命令:")
-    print("   tasks          # 查看任务列表")
-    print("   kill <id>      # 终止任务")
-    print("   killall        # 终止所有任务")
-    print("   hookbase64     # Base64 Hook任务")
-    print("📚 输入 help() 查看所有可用函数")
-    print("📚 输入 taskhelp 查看任务管理命令")
-    print("🚪 输入 q 或 exit 退出")
-    print("="*60 + "\n")
+    print("\n" + "="*50)
+    print("🎯 fridac 交互模式")
+    print("-"*50)
+    print("快捷操作: Tab=补全  ↑↓=翻历史  Ctrl+R=搜索")
+    print("-"*50)
+    print("常用: traceClass('类', 1)  traceMethod('类.方法', 1)")
+    print("      findClasses('关键字')  tasks / kill / killall")
+    print("-"*50)
+    print("帮助: help() 查看所有函数  taskhelp 任务命令")
+    print("退出: q 或 exit")
+    print("="*50 + "\n")
 
 def _handle_reload_scripts():
     """处理脚本重载命令"""
