@@ -418,6 +418,9 @@ class FridacSession:
                         raise
 
                 log_success("已连接到运行中的应用")
+                
+                # 将应用拉到前台
+                self._bring_app_to_foreground(app_name)
             
             # 加载并创建脚本
             log_info("正在加载 Frida 脚本...")
@@ -467,6 +470,24 @@ class FridacSession:
             
         except Exception as e:
             log_error("执行错误: {}".format(e))
+    
+    def _bring_app_to_foreground(self, package_name: str):
+        """将应用拉到前台"""
+        try:
+            import subprocess
+            # 使用 monkey 命令启动应用的主 Activity
+            cmd = ['adb', 'shell', 'monkey', '-p', package_name, '-c', 
+                   'android.intent.category.LAUNCHER', '1']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                log_info(f"📱 已将 {package_name} 拉到前台")
+            else:
+                # 备用方案：使用 am start
+                cmd2 = ['adb', 'shell', 'am', 'start', '-n', 
+                        f'{package_name}/.MainActivity', '--activity-brought-to-front']
+                subprocess.run(cmd2, capture_output=True, timeout=5)
+        except Exception as e:
+            log_debug(f"拉起应用失败 (非致命): {e}")
     
     def _setup_task_manager(self):
         """初始化任务管理器"""

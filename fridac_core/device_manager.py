@@ -196,16 +196,16 @@ class DeviceManager:
         """检查 frida-server 是否运行"""
         log_info("🔍 检查 frida-server 状态...")
         
-        # 检查进程
-        code, stdout, _ = self._run_adb_shell('ps -A | grep -i frida')
-        if code == 0 and 'frida' in stdout.lower():
+        # 检查端口 27042 是否被监听（最可靠的方式）
+        code, stdout, _ = self._run_adb_shell("su -c 'netstat -tlnp 2>/dev/null | grep 27042'")
+        if code == 0 and '27042' in stdout:
             self.frida_server_running = True
             log_success("✅ frida-server 正在运行")
             return True
         
-        # 备用检查
-        code, stdout, _ = self._run_adb_shell('ps | grep -i frida')
-        if code == 0 and 'frida' in stdout.lower():
+        # 备用：检查进程名 (fs 或 frida)
+        code, stdout, _ = self._run_adb_shell('ps -A | grep -E "(frida|/fs$)"')
+        if code == 0 and stdout.strip():
             self.frida_server_running = True
             log_success("✅ frida-server 正在运行")
             return True
@@ -218,35 +218,58 @@ class DeviceManager:
         """查找已存在的 frida-server"""
         log_info("🔍 查找已有的 frida-server...")
         
-        # 检查 /data/local/tmp 目录
-        code, stdout, _ = self._run_adb_shell('ls -la /data/local/tmp/ | grep -E "^-.*fs(14|16)"')
+        # 获取客户端版本用于匹配
+        client_version = self._get_client_frida_version()
+        version_suffix = client_version.replace('.', '')  # 如 16011
+        client_major = self._get_client_frida_major()  # 如 16
+        
+        # 优先查找与客户端完全匹配的版本 (如 fs16011)
+        exact_match = f'fs{version_suffix}'
+        code, stdout, _ = self._run_adb_shell(f'ls -la /data/local/tmp/{exact_match} 2>/dev/null')
+        if code == 0 and exact_match in stdout:
+            self.frida_server_path = f'/data/local/tmp/{exact_match}'
+            log_success(f"✅ 找到匹配版本: {exact_match}")
+            return self.frida_server_path
+        
+        # 查找同主版本的 fs (如 fs16*)
+        code, stdout, _ = self._run_adb_shell(f'ls -la /data/local/tmp/ | grep -E "^-.*fs{client_major}"')
         if code == 0 and stdout:
             lines = stdout.strip().split('\n')
             servers = []
             for line in lines:
-                # 提取文件名
                 parts = line.split()
                 if parts:
                     fname = parts[-1]
-                    if fname.startswith('fs14') or fname.startswith('fs16'):
+                    if fname.startswith(f'fs{client_major}'):
                         servers.append(fname)
             
             if servers:
-                log_info(f"   找到 frida-server: {', '.join(servers)}")
-                # 优先选择与客户端版本匹配的
-                client_major = self._get_client_frida_major()
-                for s in servers:
-                    if s.startswith(f'fs{client_major}'):
-                        self.frida_server_path = f'/data/local/tmp/{s}'
-                        log_success(f"✅ 选择 frida-server: {s}")
-                        return self.frida_server_path
-                
-                # 否则选择第一个
-                self.frida_server_path = f'/data/local/tmp/{servers[0]}'
-                log_success(f"✅ 选择 frida-server: {servers[0]}")
+                # 选择版本号最大的
+                servers.sort(reverse=True)
+                selected = servers[0]
+                self.frida_server_path = f'/data/local/tmp/{selected}'
+                log_success(f"✅ 找到兼容版本: {selected}")
+                if len(servers) > 1:
+                    log_info(f"   其他版本: {', '.join(servers[1:])}")
                 return self.frida_server_path
         
-        # 检查默认名称的 frida-server
+        # 查找任意 fs* 版本（兼容其他主版本）
+        code, stdout, _ = self._run_adb_shell('ls -la /data/local/tmp/ | grep -E "^-.*fs[0-9]"')
+        if code == 0 and stdout:
+            lines = stdout.strip().split('\n')
+            servers = []
+            for line in lines:
+                parts = line.split()
+                if parts:
+                    fname = parts[-1]
+                    if fname.startswith('fs') and len(fname) > 2 and fname[2].isdigit():
+                        servers.append(fname)
+            
+            if servers:
+                log_warning(f"⚠️ 未找到匹配版本，可用: {', '.join(servers)}")
+                log_info(f"   客户端版本: {client_version}，建议下载匹配版本")
+        
+        # 查找 frida-server* 命名（兼容旧格式）
         code, stdout, _ = self._run_adb_shell('ls -la /data/local/tmp/frida-server* 2>/dev/null')
         if code == 0 and 'frida-server' in stdout:
             lines = stdout.strip().split('\n')
@@ -301,7 +324,9 @@ class DeviceManager:
         # 创建临时目录
         temp_dir = tempfile.mkdtemp(prefix='fridac_')
         xz_file = os.path.join(temp_dir, f'frida-server-{client_version}-android-{self.cpu_arch}.xz')
-        server_file = os.path.join(temp_dir, f'fs{major}_{self.cpu_arch}')
+        # 命名格式: fs + 版本号(去掉小数点)，如 fs16011
+        version_suffix = client_version.replace('.', '')
+        server_file = os.path.join(temp_dir, f'fs{version_suffix}')
         
         downloaded = False
         for url in urls:
@@ -363,7 +388,7 @@ class DeviceManager:
         
         # 推送到设备
         log_info("📲 推送到设备...")
-        remote_path = f'/data/local/tmp/fs{major}_{self.cpu_arch}'
+        remote_path = f'/data/local/tmp/fs{version_suffix}'
         
         code, stdout, stderr = self._run_adb('push', server_file, remote_path)
         if code != 0:
@@ -390,8 +415,9 @@ class DeviceManager:
         
         log_info(f"🚀 启动 frida-server: {self.frida_server_path}")
         
-        # 先杀掉可能存在的进程
-        self._run_adb_shell('pkill -f frida-server', as_root=True)
+        # 先杀掉可能存在的进程 (匹配 fs 和 frida-server)
+        self._run_adb_shell('pkill -9 -f "/data/local/tmp/fs"', as_root=True)
+        self._run_adb_shell('pkill -9 -f frida-server', as_root=True)
         time.sleep(0.5)
         
         # 后台启动 frida-server
@@ -415,6 +441,7 @@ class DeviceManager:
     def stop_frida_server(self) -> bool:
         """停止 frida-server"""
         log_info("🛑 停止 frida-server...")
+        self._run_adb_shell('pkill -f "/data/local/tmp/fs"', as_root=True)
         self._run_adb_shell('pkill -f frida-server', as_root=True)
         time.sleep(0.5)
         
@@ -423,6 +450,7 @@ class DeviceManager:
             return True
         
         # 强制 kill
+        self._run_adb_shell('pkill -9 -f "/data/local/tmp/fs"', as_root=True)
         self._run_adb_shell('pkill -9 -f frida-server', as_root=True)
         time.sleep(0.3)
         return not self.check_frida_server_running()
