@@ -168,12 +168,19 @@ fridac> objectdump 0x108bb               # 深入查看嵌套对象
 
 基于 [Small-Trace](https://github.com/NiTianErXing666/Small-Trace) 项目的 SO 汇编级追踪功能，可追踪 Native 函数执行的每条汇编指令。
 
+**v2.0 增强功能**：
+- 📊 **完整寄存器变化**：记录所有变化的寄存器，不再仅记录第一个
+- 🔢 **指令序号**：每条指令带唯一序号，便于精确定位
+- 📈 **调用深度**：`[D1]/[D2]/[D3]` 标记函数嵌套层级
+- 🏷️ **操作类型**：`[A]`算术/`[L]`逻辑/`[M]`内存/`[B]`分支/`[C]`调用/`[R]`返回
+- 🔍 **源寄存器追踪**：内存写入记录数据来源寄存器
+
 | 命令 | 说明 |
 |------|------|
-| `smalltrace <so> <offset>` | 按偏移追踪 SO 函数 |
-| `smalltrace_symbol <so> <symbol>` | 按符号名追踪 |
+| `smalltrace <so> <offset> [argc]` | 按偏移追踪 SO 函数 |
+| `smalltrace_symbol <so> <symbol> [argc]` | 按符号名追踪 |
 | `smalltrace_pull [output]` | 拉取追踪日志到本地 |
-| `smalltrace_status` | 查看追踪状态 |
+| `smalltrace_status` | 查看追踪状态和统计 |
 
 **使用示例**：
 
@@ -186,9 +193,23 @@ fridac> smalltrace_symbol libtarget.so encryptToMd5Hex
 
 # 触发目标函数后，拉取追踪日志
 fridac> smalltrace_pull ~/Desktop/trace.log
+
+# 查看追踪状态（v2.0 显示操作类型分布）
+fridac> smalltrace_status
+```
+
+**v2.0 日志示例**：
+```
+#1 [D1] [M] 0x7dd046e244    0x21244    ldr    x16, #0x8    ;X16=0x0->0x7e8897c000
+  MEM_read @0x7dd046e24c size=8 val=00c097887e000000
+#42 [D1] [M] 0x7e8b8df098    0x0       str    x30, [sp, #0x100]
+  MEM_write @0xb400007dd0f0cd80 size=8 val=ace346d07d000000
+    SRC_REG=X30 val=0x7dd046e3ac
 ```
 
 > ⚠️ **注意**: Small-Trace 仅支持 ARM64 架构，首次使用会自动下载 libqdbi.so (~18MB)。需要 Root 权限和关闭 SELinux。
+>
+> 📊 使用 [QBDITraceViewer](https://github.com/cxapython/QBDITraceViewer) 可视化分析追踪日志，支持值流追踪和算法还原。
 
 ## 📁 项目结构
 
