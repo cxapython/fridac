@@ -581,24 +581,26 @@ class QBDITraceAnalyzer:
     """
     
     # v2.0 正则表达式
+    # 注意：日志中使用 tab 分隔，需要用 \s+ 匹配
     INSTRUCTION_V2_RE = re.compile(
         r'^#(\d+)\s+'                         # 指令序号
         r'\[D(\d+)\]\s+'                      # 调用深度
         r'(?:\[([ALMCBR])\]\s+)?'             # 操作类型（可选）
         r'(0x[0-9a-fA-F]+)\s+'                # 绝对地址
         r'(0x[0-9a-fA-F]+)\s+'                # 偏移
-        r'(?:\t+)?'                           # 可选的多个tab
         r'([a-zA-Z][a-zA-Z0-9.]*)'            # 指令助记符
         r'(.*)$'                              # 操作数和寄存器变化
     )
     
+    # v2.0 内存访问正则（行被 strip 后不要求前导空格）
     MEMORY_V2_RE = re.compile(
-        r'^\s+MEM_(read|write)\s+@(0x[0-9a-fA-F]+)\s+'
+        r'^MEM_(read|write)\s+@(0x[0-9a-fA-F]+)\s+'
         r'size=(\d+)\s+val=([0-9a-fA-F]+)'
     )
     
+    # v2.0 源寄存器正则
     SRC_REG_RE = re.compile(
-        r'^\s+SRC_REG=([XWxw]\d+)\s+val=(0x[0-9a-fA-F]+)'
+        r'^SRC_REG=([XWxw]\d+)\s+val=(0x[0-9a-fA-F]+)'
     )
     
     def __init__(self, trace_file: str):
@@ -663,10 +665,16 @@ class QBDITraceAnalyzer:
                         continue
                     
                     # 0. 检测版本和跳过注释
+                    # 注意：v2.0 指令行也以 # 开头 (#123 [D1] ...)，需要区分
                     if line.startswith('#'):
-                        if 'QBDI Trace v2' in line:
-                            self.trace_version = "2.0"
-                        continue
+                        if len(line) > 1 and line[1].isdigit():
+                            # 这是 v2.0 指令行，不跳过
+                            pass
+                        else:
+                            # 这是注释行
+                            if 'QBDI Trace v2' in line:
+                                self.trace_version = "2.0"
+                            continue
                     
                     # 1. 解析头部 [hook]
                     if line.startswith('[hook]'):
