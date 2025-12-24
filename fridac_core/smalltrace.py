@@ -73,7 +73,7 @@ class SmallTraceConfig:
     args_count: int = 5             # 函数参数数量
     output_file: str = ""           # 本地输出文件路径
     package_name: str = ""          # 应用包名 (用于定位追踪日志)
-    enable_hexdump: bool = True     # 是否显示 hexdump (默认启用)
+    show_hexdump: bool = False      # 是否显示 hexdump 内容 (默认关闭)
 
 
 class SmallTraceManager:
@@ -267,6 +267,10 @@ class SmallTraceManager:
         Returns:
             JavaScript 脚本内容
         """
+        # 转换 show_hexdump 为 JS 整数
+        hexdump_flag = 1 if config.show_hexdump else 0
+        hexdump_text = "开启" if config.show_hexdump else "关闭"
+        
         script = f'''// Small-Trace 追踪脚本 (由 fridac 生成)
 // 目标: {config.so_name} @ 0x{config.offset:x} ({config.symbol or 'offset'})
 
@@ -277,10 +281,10 @@ class SmallTraceManager:
     const so_offset = {hex(config.offset)};
     const Trace_Mode = {config.trace_mode};  // 0=符号, 1=偏移
     const args = {config.args_count};
-    const enable_hexdump = {str(config.enable_hexdump).lower()};  // hexdump 显示开关 (true/false)
+    const show_hexdump = {hexdump_flag};  // hexdump 显示开关
     
-    let Calvin_Trace_symbol = null;
-    let Calvin_Trace_offset = null;
+    let Calvin_Trace_symbol_ex = null;
+    let Calvin_Trace_offset_ex = null;
     let gqb_set_hexdump_enabled = null;
     let isTraceSoLoaded = false;
     
@@ -295,17 +299,19 @@ class SmallTraceManager:
         console.log("[*] 目标偏移: 0x" + so_offset.toString(16));
     }}
     console.log("[*] 参数数量: " + args);
+    console.log("[*] Hexdump: " + (show_hexdump ? "开启" : "关闭"));
     console.log("");
     
     function traceSymbolOrOffset(soName, symbolName, addr, mode) {{
         if (mode === 0) {{
             console.log("[*] 开始符号追踪: " + soName + " -> " + symbolName);
-            if (Calvin_Trace_symbol !== null) {{
-                const symbolFunc = new NativeFunction(Calvin_Trace_symbol, 'int', ['pointer', 'pointer', 'int']);
+            if (Calvin_Trace_symbol_ex !== null) {{
+                // 使用带 hexdump 参数的新函数
+                const symbolFunc = new NativeFunction(Calvin_Trace_symbol_ex, 'int', ['pointer', 'pointer', 'int', 'int']);
                 try {{
                     const agr1 = Memory.allocUtf8String(SO_name);
                     const agr2 = Memory.allocUtf8String(symbolName);
-                    const result = symbolFunc(agr1, agr2, args);
+                    const result = symbolFunc(agr1, agr2, args, show_hexdump);
                     console.log("[+] 符号追踪启动，结果: " + result);
                 }} catch (e) {{
                     console.log("[-] 符号追踪失败: " + e);
@@ -313,11 +319,12 @@ class SmallTraceManager:
             }}
         }} else if (mode === 1) {{
             console.log("[*] 开始偏移量追踪: " + soName + " @ 0x" + addr.toString(16));
-            if (Calvin_Trace_offset !== null) {{
-                const offsetFunc = new NativeFunction(Calvin_Trace_offset, 'int', ['pointer', 'long', 'int']);
+            if (Calvin_Trace_offset_ex !== null) {{
+                // 使用带 hexdump 参数的新函数
+                const offsetFunc = new NativeFunction(Calvin_Trace_offset_ex, 'int', ['pointer', 'long', 'int', 'int']);
                 try {{
                     const agr1 = Memory.allocUtf8String(SO_name);
-                    const result = offsetFunc(agr1, addr, args);
+                    const result = offsetFunc(agr1, addr, args, show_hexdump);
                     console.log("[+] 偏移量追踪启动，结果: " + result);
                     
                     console.log("");
@@ -344,21 +351,16 @@ class SmallTraceManager:
             console.log("[+] 追踪库加载成功");
             isTraceSoLoaded = true;
             
-            Calvin_Trace_symbol = Module.findExportByName(TraceSoPath, 'Calvin_Trace_symbol');
-            Calvin_Trace_offset = Module.findExportByName(TraceSoPath, 'Calvin_Trace_offset');
+            // 获取带 hexdump 参数的新函数
+            Calvin_Trace_symbol_ex = Module.findExportByName(TraceSoPath, 'Calvin_Trace_symbol_ex');
+            Calvin_Trace_offset_ex = Module.findExportByName(TraceSoPath, 'Calvin_Trace_offset_ex');
             gqb_set_hexdump_enabled = Module.findExportByName(TraceSoPath, 'gqb_set_hexdump_enabled');
             
-            console.log("[*] Calvin_Trace_symbol: " + Calvin_Trace_symbol);
-            console.log("[*] Calvin_Trace_offset: " + Calvin_Trace_offset);
+            console.log("[*] Calvin_Trace_symbol_ex: " + Calvin_Trace_symbol_ex);
+            console.log("[*] Calvin_Trace_offset_ex: " + Calvin_Trace_offset_ex);
+            console.log("[*] gqb_set_hexdump_enabled: " + gqb_set_hexdump_enabled);
             
-            // 配置 hexdump 显示
-            if (gqb_set_hexdump_enabled) {{
-                const hexdumpFunc = new NativeFunction(gqb_set_hexdump_enabled, 'void', ['int']);
-                hexdumpFunc(enable_hexdump ? 1 : 0);
-                console.log("[*] Hexdump 显示: " + (enable_hexdump ? "启用" : "禁用"));
-            }}
-            
-            if ((Trace_Mode === 0 && Calvin_Trace_symbol) || (Trace_Mode === 1 && Calvin_Trace_offset)) {{
+            if ((Trace_Mode === 0 && Calvin_Trace_symbol_ex) || (Trace_Mode === 1 && Calvin_Trace_offset_ex)) {{
                 traceSymbolOrOffset(SO_name, Symbol, so_offset, Trace_Mode);
             }} else {{
                 console.log("[-] 追踪函数未找到");
@@ -392,18 +394,10 @@ class SmallTraceManager:
                             console.log("[+] 追踪库已加载");
                             isTraceSoLoaded = true;
                             
-                            Calvin_Trace_symbol = Module.findExportByName(TraceSoPath, 'Calvin_Trace_symbol');
-                            Calvin_Trace_offset = Module.findExportByName(TraceSoPath, 'Calvin_Trace_offset');
-                            gqb_set_hexdump_enabled = Module.findExportByName(TraceSoPath, 'gqb_set_hexdump_enabled');
+                            Calvin_Trace_symbol_ex = Module.findExportByName(TraceSoPath, 'Calvin_Trace_symbol_ex');
+                            Calvin_Trace_offset_ex = Module.findExportByName(TraceSoPath, 'Calvin_Trace_offset_ex');
                             
-                            // 配置 hexdump 显示
-                            if (gqb_set_hexdump_enabled) {{
-                                const hexdumpFunc = new NativeFunction(gqb_set_hexdump_enabled, 'void', ['int']);
-                                hexdumpFunc(enable_hexdump ? 1 : 0);
-                                console.log("[*] Hexdump 显示: " + (enable_hexdump ? "启用" : "禁用"));
-                            }}
-                            
-                            if ((Trace_Mode === 0 && Calvin_Trace_symbol) || (Trace_Mode === 1 && Calvin_Trace_offset)) {{
+                            if ((Trace_Mode === 0 && Calvin_Trace_symbol_ex) || (Trace_Mode === 1 && Calvin_Trace_offset_ex)) {{
                                 traceSymbolOrOffset(traced_so, Symbol, so_offset, Trace_Mode);
                             }}
                         }} catch (e) {{
