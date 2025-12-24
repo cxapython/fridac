@@ -33,6 +33,7 @@ from .completer import FridacCompleter, get_prompt_toolkit_available
 from .script_manager import create_frida_script, get_custom_script_manager
 from .task_manager import FridaTaskManager, TaskType, TaskStatus
 from .script_templates import ScriptTemplateEngine
+from .smalltrace import get_smalltrace_manager, SmallTraceConfig, parse_offset
 
 # prompt_toolkit 支持(内联提示）
 try:
@@ -1599,6 +1600,48 @@ def _handle_task_commands(session, user_input):
         session.classsearch(pattern)
         return True
     
+    # ===== Small-Trace (QBDI 汇编追踪) 命令 =====
+    elif cmd == 'smalltrace':
+        # smalltrace <so_name> <offset> [output_file] [args_count]
+        if len(parts) < 3:
+            log_error("❌ 用法: smalltrace <so_name> <offset> [output_file] [args_count]")
+            log_info("   示例: smalltrace libjnicalculator.so 0x21244")
+            log_info("   示例: smalltrace libjnicalculator.so 0x21244 ~/Desktop/trace.log 5")
+            return True
+        
+        _handle_smalltrace_command(session, parts)
+        return True
+    
+    elif cmd == 'smalltrace_symbol':
+        # smalltrace_symbol <so_name> <symbol> [output_file] [args_count]
+        if len(parts) < 3:
+            log_error("❌ 用法: smalltrace_symbol <so_name> <symbol> [output_file] [args_count]")
+            log_info("   示例: smalltrace_symbol libjnicalculator.so encryptToMd5Hex")
+            return True
+        
+        _handle_smalltrace_symbol_command(session, parts)
+        return True
+    
+    elif cmd == 'smalltrace_pull':
+        # smalltrace_pull [output_file]
+        output_file = parts[1] if len(parts) > 1 else os.path.expanduser("~/Desktop/qbdi_trace.log")
+        _handle_smalltrace_pull_command(session, output_file)
+        return True
+    
+    elif cmd == 'smalltrace_status':
+        _handle_smalltrace_status_command(session)
+        return True
+    
+    elif cmd == 'stalker_trace':
+        # stalker_trace <so_name> <offset> [output_file]
+        if len(parts) < 3:
+            log_error("❌ 用法: stalker_trace <so_name> <offset> [output_file]")
+            log_info("   示例: stalker_trace libjnicalculator.so 0x1f5e0 ~/Desktop/stalker_trace.txt")
+            return True
+        
+        _handle_stalker_trace_command(session, parts)
+        return True
+    
     # 检查是否是自定义函数命令
     elif _handle_custom_function_command(session, cmd, parts):
         return True
@@ -1797,6 +1840,254 @@ def _handle_reload_scripts():
             log_warning("⚠️ 自定义脚本管理器未初始化")
     except Exception as e:
         log_error(f"❌ 重载脚本失败: {e}")
+
+
+# ===== Small-Trace 命令处理函数 =====
+
+def _handle_smalltrace_command(session, parts):
+    """处理 smalltrace 偏移追踪命令"""
+    try:
+        so_name = parts[1]
+        offset = parse_offset(parts[2])
+        output_file = os.path.expanduser(parts[3]) if len(parts) > 3 else os.path.expanduser("~/Desktop/qbdi_trace.log")
+        args_count = int(parts[4]) if len(parts) > 4 else 5
+        
+        log_info("🔬 Small-Trace SO 汇编追踪")
+        log_info(f"   目标: {so_name} @ 0x{offset:x}")
+        log_info(f"   输出: {output_file}")
+        
+        # 获取 SmallTrace 管理器
+        manager = get_smalltrace_manager()
+        
+        # 确保追踪库可用
+        if not manager.ensure_libqdbi():
+            log_error("❌ Small-Trace 追踪库不可用")
+            return
+        
+        # 关闭 SELinux
+        manager.disable_selinux()
+        
+        # 生成追踪脚本
+        config = SmallTraceConfig(
+            so_name=so_name,
+            offset=offset,
+            trace_mode=1,  # 偏移追踪
+            args_count=args_count,
+            output_file=output_file
+        )
+        
+        script_content = manager.generate_trace_script(config)
+        
+        # 执行脚本
+        log_info("📜 注入追踪脚本...")
+        session.execute_js(script_content)
+        
+        # 保存配置供后续 pull 使用
+        session._smalltrace_output = output_file
+        session._smalltrace_package = session.package_name if hasattr(session, 'package_name') else None
+        
+        log_success("✅ Small-Trace 已启动")
+        log_info("   触发目标函数后，使用 'smalltrace_pull' 拉取追踪日志")
+        
+    except Exception as e:
+        log_error(f"❌ Small-Trace 启动失败: {e}")
+
+
+def _handle_smalltrace_symbol_command(session, parts):
+    """处理 smalltrace_symbol 符号追踪命令"""
+    try:
+        so_name = parts[1]
+        symbol = parts[2]
+        output_file = os.path.expanduser(parts[3]) if len(parts) > 3 else os.path.expanduser("~/Desktop/qbdi_trace.log")
+        args_count = int(parts[4]) if len(parts) > 4 else 5
+        
+        log_info("🔬 Small-Trace 符号追踪")
+        log_info(f"   目标: {so_name}::{symbol}")
+        log_info(f"   输出: {output_file}")
+        
+        # 获取 SmallTrace 管理器
+        manager = get_smalltrace_manager()
+        
+        # 确保追踪库可用
+        if not manager.ensure_libqdbi():
+            log_error("❌ Small-Trace 追踪库不可用")
+            return
+        
+        # 关闭 SELinux
+        manager.disable_selinux()
+        
+        # 生成追踪脚本
+        config = SmallTraceConfig(
+            so_name=so_name,
+            symbol=symbol,
+            trace_mode=0,  # 符号追踪
+            args_count=args_count,
+            output_file=output_file
+        )
+        
+        script_content = manager.generate_trace_script(config)
+        
+        # 执行脚本
+        log_info("📜 注入追踪脚本...")
+        session.execute_js(script_content)
+        
+        # 保存配置
+        session._smalltrace_output = output_file
+        session._smalltrace_package = session.package_name if hasattr(session, 'package_name') else None
+        
+        log_success("✅ Small-Trace 已启动")
+        log_info("   触发目标函数后，使用 'smalltrace_pull' 拉取追踪日志")
+        
+    except Exception as e:
+        log_error(f"❌ Small-Trace 启动失败: {e}")
+
+
+def _handle_smalltrace_pull_command(session, output_file):
+    """处理 smalltrace_pull 拉取日志命令"""
+    try:
+        manager = get_smalltrace_manager()
+        
+        # 获取包名
+        package_name = getattr(session, '_smalltrace_package', None) or \
+                       getattr(session, 'package_name', None)
+        
+        if not package_name:
+            log_error("❌ 未知应用包名，请指定包名")
+            log_info("   用法: smalltrace_pull <output_file> <package_name>")
+            return
+        
+        # 拉取日志
+        if manager.pull_trace_log(package_name, output_file):
+            # 显示统计
+            stats = manager.get_trace_stats(output_file)
+            log_info(f"📊 追踪统计:")
+            log_info(f"   总行数: {stats['total_lines']}")
+            log_info(f"   指令数: {stats['instructions']}")
+            log_info(f"   内存读: {stats['memory_reads']}")
+            log_info(f"   内存写: {stats['memory_writes']}")
+        
+    except Exception as e:
+        log_error(f"❌ 拉取追踪日志失败: {e}")
+
+
+def _handle_smalltrace_status_command(session):
+    """处理 smalltrace_status 状态命令"""
+    try:
+        manager = get_smalltrace_manager()
+        
+        log_info("📊 Small-Trace 状态")
+        log_info("=" * 50)
+        
+        # 检查追踪库
+        if manager.check_libqdbi():
+            log_success("✅ 追踪库: 已就绪")
+        else:
+            log_warning("⚠️ 追踪库: 未安装")
+            log_info("   运行 smalltrace 命令会自动下载")
+        
+        # 检查 SELinux
+        code, stdout, _ = manager._run_adb_shell('getenforce')
+        selinux_status = stdout.strip() if code == 0 else "未知"
+        if 'Permissive' in selinux_status or 'Disabled' in selinux_status:
+            log_success(f"✅ SELinux: {selinux_status}")
+        else:
+            log_warning(f"⚠️ SELinux: {selinux_status}")
+            log_info("   建议: adb shell su -c 'setenforce 0'")
+        
+        # 当前追踪配置
+        if hasattr(session, '_smalltrace_output'):
+            log_info(f"📁 输出文件: {session._smalltrace_output}")
+        if hasattr(session, '_smalltrace_package'):
+            log_info(f"📦 目标包名: {session._smalltrace_package}")
+        
+    except Exception as e:
+        log_error(f"❌ 获取状态失败: {e}")
+
+
+def _handle_stalker_trace_command(session, parts):
+    """处理 stalker_trace Frida Stalker 追踪命令"""
+    try:
+        so_name = parts[1]
+        offset = parse_offset(parts[2])
+        output_file = os.path.expanduser(parts[3]) if len(parts) > 3 else "/tmp/stalker_trace.txt"
+        
+        log_info("🔍 Frida Stalker 汇编追踪")
+        log_info(f"   目标: {so_name} @ 0x{offset:x}")
+        log_info(f"   输出: {output_file} (设备上)")
+        
+        # 生成 Stalker 追踪脚本
+        script_content = f'''
+(function() {{
+    const moduleName = "{so_name}";
+    const targetOffset = {hex(offset)};
+    const traceFile = new File("{output_file}", "w");
+    
+    console.log("═══════════════════════════════════════════════════════════════");
+    console.log("     Frida Stalker 汇编追踪");
+    console.log("═══════════════════════════════════════════════════════════════");
+    
+    const mod = Process.findModuleByName(moduleName);
+    if (!mod) {{
+        console.log("[-] 模块未找到: " + moduleName);
+        return;
+    }}
+    
+    console.log("[+] 模块基址: " + mod.base);
+    const targetAddr = mod.base.add(targetOffset);
+    console.log("[+] 目标地址: " + targetAddr);
+    
+    let callCount = 0;
+    let instructionCount = 0;
+    
+    Interceptor.attach(targetAddr, {{
+        onEnter: function(args) {{
+            this.threadId = Process.getCurrentThreadId();
+            callCount++;
+            instructionCount = 0;
+            
+            console.log("\\n[*] 函数调用 #" + callCount);
+            traceFile.write("\\n========== 函数调用 #" + callCount + " ==========\\n");
+            traceFile.write("地址: " + targetAddr + "\\n\\n");
+            
+            Stalker.flush();
+            Stalker.follow(this.threadId, {{
+                events: {{
+                    call: false,
+                    ret: false,
+                    exec: true,
+                    block: false,
+                    compile: false
+                }},
+                onReceive: function(events) {{
+                    // 解析事件
+                }}
+            }});
+        }},
+        onLeave: function(retval) {{
+            Stalker.unfollow(this.threadId);
+            Stalker.flush();
+            
+            console.log("[*] 函数返回: " + retval);
+            traceFile.write("\\n返回值: " + retval + "\\n");
+            traceFile.write("==========================================\\n");
+            traceFile.flush();
+        }}
+    }});
+    
+    console.log("[+] Stalker Hook 已设置");
+    console.log("    触发目标函数后将记录汇编指令流");
+    console.log("    输出文件: {output_file}");
+}})();
+'''
+        
+        # 执行脚本
+        session.execute_js(script_content)
+        
+        log_success("✅ Stalker 追踪已启动")
+        
+    except Exception as e:
+        log_error(f"❌ Stalker 追踪启动失败: {e}")
+
 
 def _handle_custom_function_command(session, cmd, parts):
     """

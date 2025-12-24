@@ -1,0 +1,7 @@
+# ARM64 架构二进制文件目录
+#
+# 请在此目录放置:
+# - frida-server-16.0.11  (从 GitHub 下载)
+# - libqdbi.so            (从 Small-Trace 下载)
+#
+# 详见上级目录的 README.md

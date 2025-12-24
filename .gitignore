@@ -2,7 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
+# *.so 移到下面，排除 binaries 目录
 .Python
 build/
 develop-eggs/
@@ -19,6 +19,14 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# 预置二进制文件 (大文件，不提交到 Git)
+# 保留目录结构 (.gitkeep)，忽略实际二进制文件
+binaries/**/*.so
+binaries/**/frida-server*
+binaries/**/fs*
+!binaries/**/.gitkeep
+!binaries/**/README.md
 
 # Virtual environments
 venv/

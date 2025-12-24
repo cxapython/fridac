@@ -164,16 +164,49 @@ fridac> objectdump 0x108bb               # 深入查看嵌套对象
 | `okhttpResend(n)` | 重放请求 |
 | `fetch('filter')` | 网络抓包 |
 
+### Small-Trace (QBDI 汇编追踪)
+
+基于 [Small-Trace](https://github.com/NiTianErXing666/Small-Trace) 项目的 SO 汇编级追踪功能，可追踪 Native 函数执行的每条汇编指令。
+
+| 命令 | 说明 |
+|------|------|
+| `smalltrace <so> <offset>` | 按偏移追踪 SO 函数 |
+| `smalltrace_symbol <so> <symbol>` | 按符号名追踪 |
+| `smalltrace_pull [output]` | 拉取追踪日志到本地 |
+| `smalltrace_status` | 查看追踪状态 |
+
+**使用示例**：
+
+```bash
+# 追踪 libjnicalculator.so 偏移 0x21244 处的函数
+fridac> smalltrace libjnicalculator.so 0x21244
+
+# 按符号名追踪
+fridac> smalltrace_symbol libtarget.so encryptToMd5Hex
+
+# 触发目标函数后，拉取追踪日志
+fridac> smalltrace_pull ~/Desktop/trace.log
+```
+
+> ⚠️ **注意**: Small-Trace 仅支持 ARM64 架构，首次使用会自动下载 libqdbi.so (~18MB)。需要 Root 权限和关闭 SELinux。
+
 ## 📁 项目结构
 
 ```
 fridac/
 ├── fridac                      # CLI 入口
 ├── fridac_core/                # Python 核心模块
+│   ├── session.py              # 会话管理
+│   ├── task_manager.py         # 任务系统
+│   ├── script_manager.py       # 脚本管理
+│   ├── smalltrace.py           # Small-Trace 集成
+│   └── ...
 ├── scripts/                    # 自定义脚本目录
 │   ├── security/               # 安全相关脚本
 │   ├── monitor/                # 监控脚本
 │   └── tools/                  # 工具脚本
+├── binaries/                   # 预置二进制文件
+│   └── arm64/                  # ARM64 架构文件
 ├── frida_common_new.js         # Java Hook 工具
 ├── frida_location_hooks_new.js # 定位 Hook 工具
 ├── frida_native_common.js      # Native Hook 工具

@@ -38,6 +38,44 @@ FRIDA_MIRROR_URLS = [
 ]
 
 
+def get_binaries_dir() -> str:
+    """获取本地 binaries 目录路径"""
+    # 获取当前模块所在目录
+    module_dir = os.path.dirname(os.path.abspath(__file__))
+    # fridac_core 的父目录是 fridac 项目根目录
+    project_root = os.path.dirname(module_dir)
+    return os.path.join(project_root, 'binaries')
+
+
+def get_local_frida_server(arch: str, version: str) -> Optional[str]:
+    """
+    检查本地是否有预置的 frida-server
+    
+    Args:
+        arch: CPU 架构 (arm64, arm, x86_64, x86)
+        version: frida 版本 (如 16.0.11)
+        
+    Returns:
+        本地文件路径，不存在则返回 None
+    """
+    binaries_dir = get_binaries_dir()
+    arch_dir = os.path.join(binaries_dir, arch)
+    
+    # 可能的文件名格式
+    possible_names = [
+        f'frida-server-{version}',
+        f'frida-server-{version}-android-{arch}',
+        f'fs{version.replace(".", "")}',
+    ]
+    
+    for name in possible_names:
+        path = os.path.join(arch_dir, name)
+        if os.path.isfile(path) and os.path.getsize(path) > 1000000:  # > 1MB
+            return path
+    
+    return None
+
+
 class DeviceManager:
     """
     设备管理器
@@ -308,14 +346,36 @@ class DeviceManager:
             return FRIDA_VERSIONS.get('16', '16.0.11')
     
     def download_frida_server(self) -> Optional[str]:
-        """下载 frida-server"""
+        """下载 frida-server (优先使用本地预置文件)"""
         if not self.cpu_arch:
             log_error("❌ 未知 CPU 架构，无法下载")
             return None
         
         client_version = self._get_client_frida_version()
         major = client_version.split('.')[0]
+        version_suffix = client_version.replace('.', '')
+        remote_path = f'/data/local/tmp/fs{version_suffix}'
         
+        # === 优先检查本地预置文件 ===
+        local_server = get_local_frida_server(self.cpu_arch, client_version)
+        if local_server:
+            log_info(f"📦 发现本地预置 frida-server: {os.path.basename(local_server)}")
+            log_info(f"   版本: {client_version}")
+            log_info(f"   架构: {self.cpu_arch}")
+            
+            # 推送到设备
+            log_info("📲 推送到设备...")
+            code, stdout, stderr = self._run_adb('push', local_server, remote_path)
+            if code == 0:
+                # 设置权限
+                self._run_adb_shell(f'chmod 755 {remote_path}', as_root=True)
+                log_success(f"✅ 已推送到: {remote_path}")
+                self.frida_server_path = remote_path
+                return remote_path
+            else:
+                log_warning(f"⚠️ 推送本地文件失败: {stderr}，尝试在线下载...")
+        
+        # === 从网络下载 ===
         log_info(f"📥 准备下载 frida-server...")
         log_info(f"   客户端版本: {client_version}")
         log_info(f"   目标架构: {self.cpu_arch}")
