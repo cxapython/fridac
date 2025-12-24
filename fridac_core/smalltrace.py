@@ -57,7 +57,8 @@ def get_local_libqdbi(arch: str = 'arm64') -> Optional[str]:
     binaries_dir = get_binaries_dir()
     libqdbi_path = os.path.join(binaries_dir, arch, 'libqdbi.so')
     
-    if os.path.isfile(libqdbi_path) and os.path.getsize(libqdbi_path) > 15000000:  # > 15MB
+    # 检查文件存在且大小 > 5MB (正常的 libqdbi.so 约 10-18MB)
+    if os.path.isfile(libqdbi_path) and os.path.getsize(libqdbi_path) > 5000000:  # > 5MB
         return libqdbi_path
     
     return None
