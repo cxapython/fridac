@@ -164,9 +164,9 @@ fridac> objectdump 0x108bb               # 深入查看嵌套对象
 | `okhttpResend(n)` | 重放请求 |
 | `fetch('filter')` | 网络抓包 |
 
-### Small-Trace (QBDI 汇编追踪)
+### Arm64Trace (QBDI 汇编追踪)
 
-基于 [Small-Trace](https://github.com/NiTianErXing666/Small-Trace) 项目的 SO 汇编级追踪功能，可追踪 Native 函数执行的每条汇编指令。
+基于 [Arm64Trace](https://github.com/cxapython/Arm64Trace) 项目的 SO 汇编级追踪功能，可追踪 Native 函数执行的每条汇编指令。
 
 **v2.0 增强功能**：
 - 📊 **完整寄存器变化**：记录所有变化的寄存器，不再仅记录第一个
