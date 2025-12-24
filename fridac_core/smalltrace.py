@@ -529,6 +529,10 @@ class TraceInstruction:
     operands: str         # 操作数
     reg_changes: str      # 寄存器变化
     line_num: int         # 行号
+    # v2.0 新增字段
+    seq: int = 0          # 指令序号
+    depth: int = 0        # 调用深度
+    op_type: str = ""     # 操作类型 (A/L/M/B/C/R)
 
 
 @dataclass
@@ -540,6 +544,9 @@ class MemoryAccess:
     data_size: int        # 数据大小
     data_value: int       # 数据值
     line_num: int         # 行号
+    # v2.0 新增字段
+    src_reg: str = ""           # 源寄存器名（仅写入）
+    src_reg_value: int = 0      # 源寄存器值（仅写入）
 
 
 @dataclass
@@ -555,9 +562,9 @@ class FunctionCall:
 
 class QBDITraceAnalyzer:
     """
-    QBDI Trace 文件解析器
+    QBDI Trace 文件解析器（支持 v1.0 和 v2.0 格式）
     
-    文件结构：
+    v1.0 文件结构：
     1. 头部: [hook] target=0x... argc=...
     2. 入口: ====== ENTER 0x... ======
     3. 指令: 0x地址  偏移  汇编指令  ;寄存器变化
@@ -565,7 +572,34 @@ class QBDITraceAnalyzer:
     5. Dump: hexdump 格式的内存块
     6. 出口: ====== LEAVE 0x... ======
     7. 结果: [gqb] vm.call ok=..., ret=...
+    
+    v2.0 新增格式：
+    - 头部注释: # QBDI Trace v2.0 ...
+    - 指令: #序号 [D深度] [类型] 0x地址 偏移 汇编 ;多寄存器变化
+    - 内存: MEM_read/write @0x地址 size=大小 val=值
+    - 源寄存器: SRC_REG=X8 val=0x...
     """
+    
+    # v2.0 正则表达式
+    INSTRUCTION_V2_RE = re.compile(
+        r'^#(\d+)\s+'                         # 指令序号
+        r'\[D(\d+)\]\s+'                      # 调用深度
+        r'(?:\[([ALMCBR])\]\s+)?'             # 操作类型（可选）
+        r'(0x[0-9a-fA-F]+)\s+'                # 绝对地址
+        r'(0x[0-9a-fA-F]+)\s+'                # 偏移
+        r'(?:\t+)?'                           # 可选的多个tab
+        r'([a-zA-Z][a-zA-Z0-9.]*)'            # 指令助记符
+        r'(.*)$'                              # 操作数和寄存器变化
+    )
+    
+    MEMORY_V2_RE = re.compile(
+        r'^\s+MEM_(read|write)\s+@(0x[0-9a-fA-F]+)\s+'
+        r'size=(\d+)\s+val=([0-9a-fA-F]+)'
+    )
+    
+    SRC_REG_RE = re.compile(
+        r'^\s+SRC_REG=([XWxw]\d+)\s+val=(0x[0-9a-fA-F]+)'
+    )
     
     def __init__(self, trace_file: str):
         self.trace_file = trace_file
@@ -592,10 +626,16 @@ class QBDITraceAnalyzer:
         
         # 内存访问热点
         self.mem_access_hotspots: Dict[int, int] = {}  # address -> access_count
+        
+        # v2.0 新增
+        self.trace_version: str = "1.0"
+        self.op_type_counts: Dict[str, int] = {}  # 操作类型统计
+        self.max_depth: int = 0  # 最大调用深度
+        self._last_inst_address: int = 0  # 最近指令地址（用于关联内存访问）
     
     def parse(self, quick_mode: bool = False) -> bool:
         """
-        解析 trace 文件
+        解析 trace 文件（支持 v1.0 和 v2.0 格式）
         
         Args:
             quick_mode: True=仅统计不存储详细数据 (大文件推荐)
@@ -618,12 +658,23 @@ class QBDITraceAnalyzer:
                     self.total_lines += 1
                     line = line.strip()
                     
+                    # 跳过空行
+                    if not line:
+                        continue
+                    
+                    # 0. 检测版本和跳过注释
+                    if line.startswith('#'):
+                        if 'QBDI Trace v2' in line:
+                            self.trace_version = "2.0"
+                        continue
+                    
                     # 1. 解析头部 [hook]
                     if line.startswith('[hook]'):
                         self._parse_hook_header(line)
+                        continue
                     
                     # 2. 解析函数入口
-                    elif line.startswith('====== ENTER'):
+                    if line.startswith('====== ENTER') or 'ENTER' in line and '======' in line:
                         addr_match = re.search(r'ENTER\s+(0x[0-9a-fA-F]+)', line)
                         if addr_match:
                             addr = int(addr_match.group(1), 16)
@@ -631,9 +682,10 @@ class QBDITraceAnalyzer:
                             current_func_instructions = 0
                             current_func_reads = 0
                             current_func_writes = 0
+                        continue
                     
                     # 3. 解析函数出口
-                    elif line.startswith('====== LEAVE') or line.startswith('======  LEAVE'):
+                    if 'LEAVE' in line and '======' in line:
                         addr_match = re.search(r'LEAVE\s+(0x[0-9a-fA-F]+)', line)
                         if addr_match:
                             addr = int(addr_match.group(1), 16)
@@ -645,21 +697,65 @@ class QBDITraceAnalyzer:
                                 mem_reads=current_func_reads,
                                 mem_writes=current_func_writes
                             ))
+                        continue
                     
-                    # 4. 解析指令
-                    elif line.startswith('0x') and '\t' in line:
+                    # 4a. v2.0 指令格式: #序号 [D深度] [类型] 0x地址 ...
+                    v2_match = self.INSTRUCTION_V2_RE.match(line)
+                    if v2_match:
+                        self.instruction_count += 1
+                        current_func_instructions += 1
+                        inst = self._parse_instruction_v2(v2_match, line_num)
+                        if inst:
+                            mnemonic = inst.mnemonic.split('.')[0]
+                            self.instruction_types[mnemonic] = self.instruction_types.get(mnemonic, 0) + 1
+                            if inst.op_type:
+                                self.op_type_counts[inst.op_type] = self.op_type_counts.get(inst.op_type, 0) + 1
+                            self.max_depth = max(self.max_depth, inst.depth)
+                            self._last_inst_address = inst.address
+                            if not quick_mode:
+                                self.instructions.append(inst)
+                        continue
+                    
+                    # 4b. v1.0 指令格式: 0x地址 偏移 汇编
+                    if line.startswith('0x') and '\t' in line:
                         self.instruction_count += 1
                         current_func_instructions += 1
                         inst = self._parse_instruction(line, line_num)
                         if inst:
-                            # 统计指令类型
-                            mnemonic = inst.mnemonic.split('.')[0]  # 去掉条件码
+                            mnemonic = inst.mnemonic.split('.')[0]
                             self.instruction_types[mnemonic] = self.instruction_types.get(mnemonic, 0) + 1
+                            self._last_inst_address = inst.address
                             if not quick_mode:
                                 self.instructions.append(inst)
+                        continue
                     
-                    # 5. 解析内存访问
-                    elif line.startswith('memory read') or line.startswith('memory write'):
+                    # 5a. v2.0 内存访问: MEM_read/write @0x...
+                    v2_mem_match = self.MEMORY_V2_RE.match(line)
+                    if v2_mem_match:
+                        access = self._parse_memory_access_v2(v2_mem_match, line_num)
+                        if access:
+                            if access.access_type == 'read':
+                                self.mem_read_count += 1
+                                current_func_reads += 1
+                            else:
+                                self.mem_write_count += 1
+                                current_func_writes += 1
+                            page_addr = access.address & ~0xFFF
+                            self.mem_access_hotspots[page_addr] = self.mem_access_hotspots.get(page_addr, 0) + 1
+                            if not quick_mode:
+                                self.memory_accesses.append(access)
+                        continue
+                    
+                    # 5b. v2.0 源寄存器: SRC_REG=X8 val=0x...
+                    src_reg_match = self.SRC_REG_RE.match(line)
+                    if src_reg_match:
+                        if self.memory_accesses:
+                            self.memory_accesses[-1].src_reg = src_reg_match.group(1).upper()
+                            self.memory_accesses[-1].src_reg_value = int(src_reg_match.group(2), 16)
+                        continue
+                    
+                    # 5c. v1.0 内存访问: memory read/write at 0x...
+                    if line.startswith('memory read') or line.startswith('memory write'):
                         access = self._parse_memory_access(line, line_num)
                         if access:
                             if access.access_type == 'read':
@@ -668,23 +764,24 @@ class QBDITraceAnalyzer:
                             else:
                                 self.mem_write_count += 1
                                 current_func_writes += 1
-                            
-                            # 统计热点
-                            page_addr = access.address & ~0xFFF  # 4KB 页对齐
+                            page_addr = access.address & ~0xFFF
                             self.mem_access_hotspots[page_addr] = self.mem_access_hotspots.get(page_addr, 0) + 1
-                            
                             if not quick_mode:
                                 self.memory_accesses.append(access)
+                        continue
                     
                     # 6. 解析结果
-                    elif line.startswith('[gqb] vm.call'):
+                    if line.startswith('[gqb] vm.call'):
                         self._parse_result(line)
+                        continue
             
-            log_success(f"✅ 解析完成")
+            log_success(f"✅ 解析完成 (格式: v{self.trace_version})")
             return True
             
         except Exception as e:
             log_error(f"解析失败: {e}")
+            import traceback
+            log_debug(traceback.format_exc())
             return False
     
     def _parse_hook_header(self, line: str):
@@ -697,8 +794,40 @@ class QBDITraceAnalyzer:
         if argc_match:
             self.argc = int(argc_match.group(1))
     
+    def _parse_instruction_v2(self, match: re.Match, line_num: int) -> Optional[TraceInstruction]:
+        """解析 v2.0 指令行"""
+        # #12345 [D1] [A] 0x7dd0462244    0x21244    add x8, x9, x10    ;X8=0x0->0x100
+        try:
+            seq = int(match.group(1))
+            depth = int(match.group(2))
+            op_type = match.group(3) or ""
+            address = int(match.group(4), 16)
+            offset = int(match.group(5), 16)
+            mnemonic = match.group(6)
+            rest = match.group(7)
+            
+            # 分离操作数和寄存器变化
+            if ';' in rest:
+                operands, reg_changes = rest.rsplit(';', 1)
+            else:
+                operands, reg_changes = rest, ''
+            
+            return TraceInstruction(
+                address=address,
+                offset=offset,
+                mnemonic=mnemonic,
+                operands=operands.strip(),
+                reg_changes=reg_changes.strip(),
+                line_num=line_num,
+                seq=seq,
+                depth=depth,
+                op_type=op_type
+            )
+        except Exception:
+            return None
+    
     def _parse_instruction(self, line: str, line_num: int) -> Optional[TraceInstruction]:
-        """解析指令行"""
+        """解析 v1.0 指令行"""
         # 0x0000007dd0462244	0x21244			ldr	x16, #8	;X16=0x0 -> 0x7e9c983100
         try:
             parts = line.split('\t')
@@ -731,8 +860,28 @@ class QBDITraceAnalyzer:
         except Exception:
             return None
     
+    def _parse_memory_access_v2(self, match: re.Match, line_num: int) -> Optional[MemoryAccess]:
+        """解析 v2.0 内存访问行"""
+        #   MEM_write @0x7ffc1fc0 size=8 val=ff01000000000000
+        try:
+            access_type = match.group(1)  # 'read' or 'write'
+            address = int(match.group(2), 16)
+            data_size = int(match.group(3))
+            data_value = int(match.group(4), 16)
+            
+            return MemoryAccess(
+                access_type=access_type,
+                address=address,
+                inst_address=self._last_inst_address,
+                data_size=data_size,
+                data_value=data_value,
+                line_num=line_num
+            )
+        except Exception:
+            return None
+    
     def _parse_memory_access(self, line: str, line_num: int) -> Optional[MemoryAccess]:
-        """解析内存访问行"""
+        """解析 v1.0 内存访问行"""
         # memory read at 0x7dd046224c, instruction address = 0x7dd0462244, data size = 8, data value = 0031989c7e000000
         try:
             access_type = 'read' if 'memory read' in line else 'write'
@@ -770,7 +919,7 @@ class QBDITraceAnalyzer:
         """打印分析摘要"""
         log_info("")
         log_info("╔════════════════════════════════════════════════════════════╗")
-        log_info("║               QBDI Trace 分析报告                           ║")
+        log_info(f"║           QBDI Trace 分析报告 (v{self.trace_version})                      ║")
         log_info("╚════════════════════════════════════════════════════════════╝")
         
         # 基本信息
@@ -790,6 +939,19 @@ class QBDITraceAnalyzer:
         log_info(f"   内存读: {self.mem_read_count:,}")
         log_info(f"   内存写: {self.mem_write_count:,}")
         log_info(f"   函数调用: {len(self.function_calls)}")
+        
+        # v2.0 特有统计
+        if self.trace_version == "2.0" and self.op_type_counts:
+            log_info("")
+            log_info("🏷️  操作类型分布 (v2.0):")
+            op_names = {'A': '算术', 'L': '逻辑', 'M': '内存', 'B': '分支', 'C': '调用', 'R': '返回'}
+            for op_code in ['A', 'L', 'M', 'B', 'C', 'R']:
+                count = self.op_type_counts.get(op_code, 0)
+                if count > 0:
+                    pct = count * 100 / self.instruction_count if self.instruction_count > 0 else 0
+                    name = op_names.get(op_code, op_code)
+                    log_info(f"   [{op_code}] {name}: {count:,} ({pct:.1f}%)")
+            log_info(f"   最大调用深度: {self.max_depth}")
         
         # 指令类型 Top 10
         log_info("")
