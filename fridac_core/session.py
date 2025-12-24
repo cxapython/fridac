@@ -1628,7 +1628,7 @@ def _handle_task_commands(session, user_input):
     
     elif cmd == 'smalltrace_pull':
         # smalltrace_pull [output_file]
-        output_file = parts[1] if len(parts) > 1 else os.path.expanduser("~/Desktop/qbdi_trace.log")
+        output_file = parts[1] if len(parts) > 1 else None  # None 表示使用之前保存的路径
         _handle_smalltrace_pull_command(session, output_file)
         return True
     
@@ -1848,17 +1848,27 @@ def _handle_reload_scripts():
 
 # ===== Small-Trace 命令处理函数 =====
 
+def _generate_trace_output_path(package_name: str = None) -> str:
+    """生成带包名和时间戳的追踪输出文件路径"""
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    pkg_part = package_name.replace('.', '_') if package_name else "unknown"
+    filename = f"qbdi_trace_{pkg_part}_{timestamp}.log"
+    return os.path.expanduser(f"~/Desktop/{filename}")
+
+
 def _handle_smalltrace_command(session, parts):
     """处理 smalltrace 偏移追踪命令"""
     try:
         so_name = parts[1]
         offset = parse_offset(parts[2])
-        output_file = os.path.expanduser(parts[3]) if len(parts) > 3 else os.path.expanduser("~/Desktop/qbdi_trace.log")
+        # 用户指定则用用户的，否则自动生成带时间戳的文件名
+        package_name = getattr(session, 'app_name', None)
+        output_file = os.path.expanduser(parts[3]) if len(parts) > 3 else _generate_trace_output_path(package_name)
         args_count = int(parts[4]) if len(parts) > 4 else 5
         
         log_info("🔬 Small-Trace SO 汇编追踪")
         log_info(f"   目标: {so_name} @ 0x{offset:x}")
-        log_info(f"   输出: {output_file}")
         
         # 获取 SmallTrace 管理器
         manager = get_smalltrace_manager()
@@ -1904,12 +1914,13 @@ def _handle_smalltrace_symbol_command(session, parts):
     try:
         so_name = parts[1]
         symbol = parts[2]
-        output_file = os.path.expanduser(parts[3]) if len(parts) > 3 else os.path.expanduser("~/Desktop/qbdi_trace.log")
+        # 用户指定则用用户的，否则自动生成带时间戳的文件名
+        package_name = getattr(session, 'app_name', None)
+        output_file = os.path.expanduser(parts[3]) if len(parts) > 3 else _generate_trace_output_path(package_name)
         args_count = int(parts[4]) if len(parts) > 4 else 5
         
         log_info("🔬 Small-Trace 符号追踪")
         log_info(f"   目标: {so_name}::{symbol}")
-        log_info(f"   输出: {output_file}")
         
         # 获取 SmallTrace 管理器
         manager = get_smalltrace_manager()
@@ -1959,17 +1970,21 @@ def _handle_smalltrace_pull_command(session, output_file):
         package_name = getattr(session, '_smalltrace_package', None) or \
                        getattr(session, 'app_name', None)
         
-        # 智能获取输出文件：如果用户未指定，使用之前保存的路径
-        if output_file == os.path.expanduser("~/Desktop/qbdi_trace.log"):
-            saved_output = getattr(session, '_smalltrace_output', None)
-            if saved_output:
-                output_file = saved_output
+        # 智能获取输出文件：用户未指定则使用之前保存的路径
+        if output_file is None:
+            output_file = getattr(session, '_smalltrace_output', None)
+        else:
+            output_file = os.path.expanduser(output_file)
         
         if not package_name:
             log_error("❌ 未知应用包名")
             log_info("   请先运行 smalltrace 命令，或指定包名:")
-            log_info("   用法: smalltrace_pull <output_file> <package_name>")
+            log_info("   用法: smalltrace_pull <output_file>")
             return
+        
+        if not output_file:
+            # 如果还没有保存的路径，生成一个新的
+            output_file = _generate_trace_output_path(package_name)
         
         log_info(f"📥 拉取追踪日志")
         log_info(f"   📦 应用: {package_name}")
@@ -2025,7 +2040,7 @@ def _handle_smalltrace_status_command(session):
         if output:
             log_info(f"   📁 输出文件: {output}")
         else:
-            log_info(f"   📁 输出文件: ~/Desktop/qbdi_trace.log (默认)")
+            log_info(f"   📁 输出文件: ~/Desktop/qbdi_trace_{{包名}}_{{时间戳}}.log (自动生成)")
         
     except Exception as e:
         log_error(f"❌ 获取状态失败: {e}")
