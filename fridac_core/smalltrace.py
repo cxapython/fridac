@@ -73,6 +73,7 @@ class SmallTraceConfig:
     args_count: int = 5             # 函数参数数量
     output_file: str = ""           # 本地输出文件路径
     package_name: str = ""          # 应用包名 (用于定位追踪日志)
+    enable_hexdump: bool = True     # 是否显示 hexdump (默认启用)
 
 
 class SmallTraceManager:
@@ -276,9 +277,11 @@ class SmallTraceManager:
     const so_offset = {hex(config.offset)};
     const Trace_Mode = {config.trace_mode};  // 0=符号, 1=偏移
     const args = {config.args_count};
+    const enable_hexdump = {str(config.enable_hexdump).lower()};  // hexdump 显示开关 (true/false)
     
     let Calvin_Trace_symbol = null;
     let Calvin_Trace_offset = null;
+    let gqb_set_hexdump_enabled = null;
     let isTraceSoLoaded = false;
     
     console.log("═══════════════════════════════════════════════════════════════");
@@ -343,9 +346,17 @@ class SmallTraceManager:
             
             Calvin_Trace_symbol = Module.findExportByName(TraceSoPath, 'Calvin_Trace_symbol');
             Calvin_Trace_offset = Module.findExportByName(TraceSoPath, 'Calvin_Trace_offset');
+            gqb_set_hexdump_enabled = Module.findExportByName(TraceSoPath, 'gqb_set_hexdump_enabled');
             
             console.log("[*] Calvin_Trace_symbol: " + Calvin_Trace_symbol);
             console.log("[*] Calvin_Trace_offset: " + Calvin_Trace_offset);
+            
+            // 配置 hexdump 显示
+            if (gqb_set_hexdump_enabled) {{
+                const hexdumpFunc = new NativeFunction(gqb_set_hexdump_enabled, 'void', ['int']);
+                hexdumpFunc(enable_hexdump ? 1 : 0);
+                console.log("[*] Hexdump 显示: " + (enable_hexdump ? "启用" : "禁用"));
+            }}
             
             if ((Trace_Mode === 0 && Calvin_Trace_symbol) || (Trace_Mode === 1 && Calvin_Trace_offset)) {{
                 traceSymbolOrOffset(SO_name, Symbol, so_offset, Trace_Mode);
@@ -383,6 +394,14 @@ class SmallTraceManager:
                             
                             Calvin_Trace_symbol = Module.findExportByName(TraceSoPath, 'Calvin_Trace_symbol');
                             Calvin_Trace_offset = Module.findExportByName(TraceSoPath, 'Calvin_Trace_offset');
+                            gqb_set_hexdump_enabled = Module.findExportByName(TraceSoPath, 'gqb_set_hexdump_enabled');
+                            
+                            // 配置 hexdump 显示
+                            if (gqb_set_hexdump_enabled) {{
+                                const hexdumpFunc = new NativeFunction(gqb_set_hexdump_enabled, 'void', ['int']);
+                                hexdumpFunc(enable_hexdump ? 1 : 0);
+                                console.log("[*] Hexdump 显示: " + (enable_hexdump ? "启用" : "禁用"));
+                            }}
                             
                             if ((Trace_Mode === 0 && Calvin_Trace_symbol) || (Trace_Mode === 1 && Calvin_Trace_offset)) {{
                                 traceSymbolOrOffset(traced_so, Symbol, so_offset, Trace_Mode);

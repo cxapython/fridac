@@ -1606,21 +1606,23 @@ def _handle_task_commands(session, user_input):
     
     # ===== Small-Trace (QBDI 汇编追踪) 命令 =====
     elif cmd == 'smalltrace':
-        # smalltrace <so_name> <offset> [output_file] [args_count]
+        # smalltrace <so_name> <offset> [output_file] [args_count] [enable_hexdump]
         if len(parts) < 3:
-            log_error("❌ 用法: smalltrace <so_name> <offset> [output_file] [args_count]")
+            log_error("❌ 用法: smalltrace <so_name> <offset> [output_file] [args_count] [enable_hexdump]")
             log_info("   示例: smalltrace libjnicalculator.so 0x21244")
             log_info("   示例: smalltrace libjnicalculator.so 0x21244 ~/Desktop/trace.log 5")
+            log_info("   示例: smalltrace libjnicalculator.so 0x21244 ~/Desktop/trace.log 5 false  # 禁用hexdump")
             return True
         
         _handle_smalltrace_command(session, parts)
         return True
     
     elif cmd == 'smalltrace_symbol':
-        # smalltrace_symbol <so_name> <symbol> [output_file] [args_count]
+        # smalltrace_symbol <so_name> <symbol> [output_file] [args_count] [enable_hexdump]
         if len(parts) < 3:
-            log_error("❌ 用法: smalltrace_symbol <so_name> <symbol> [output_file] [args_count]")
+            log_error("❌ 用法: smalltrace_symbol <so_name> <symbol> [output_file] [args_count] [enable_hexdump]")
             log_info("   示例: smalltrace_symbol libjnicalculator.so encryptToMd5Hex")
+            log_info("   示例: smalltrace_symbol libjnicalculator.so encryptToMd5Hex ~/Desktop/trace.log 5 false  # 禁用hexdump")
             return True
         
         _handle_smalltrace_symbol_command(session, parts)
@@ -1877,8 +1879,18 @@ def _handle_smalltrace_command(session, parts):
         output_file = os.path.expanduser(parts[3]) if len(parts) > 3 else _generate_trace_output_path(package_name)
         args_count = int(parts[4]) if len(parts) > 4 else 5
         
+        # 解析 hexdump 开关参数 (第6个参数，可选)
+        enable_hexdump = True  # 默认启用
+        if len(parts) > 5:
+            hexdump_arg = parts[5].lower()
+            if hexdump_arg in ('0', 'false', 'no', 'disable', 'off'):
+                enable_hexdump = False
+            elif hexdump_arg in ('1', 'true', 'yes', 'enable', 'on'):
+                enable_hexdump = True
+        
         log_info("🔬 Small-Trace SO 汇编追踪")
         log_info(f"   目标: {so_name} @ 0x{offset:x}")
+        log_info(f"   Hexdump: {'启用' if enable_hexdump else '禁用'}")
         
         # 获取 SmallTrace 管理器
         manager = get_smalltrace_manager()
@@ -1897,7 +1909,8 @@ def _handle_smalltrace_command(session, parts):
             offset=offset,
             trace_mode=1,  # 偏移追踪
             args_count=args_count,
-            output_file=output_file
+            output_file=output_file,
+            enable_hexdump=enable_hexdump
         )
         
         script_content = manager.generate_trace_script(config)
@@ -1929,8 +1942,18 @@ def _handle_smalltrace_symbol_command(session, parts):
         output_file = os.path.expanduser(parts[3]) if len(parts) > 3 else _generate_trace_output_path(package_name)
         args_count = int(parts[4]) if len(parts) > 4 else 5
         
+        # 解析 hexdump 开关参数 (第6个参数，可选)
+        enable_hexdump = True  # 默认启用
+        if len(parts) > 5:
+            hexdump_arg = parts[5].lower()
+            if hexdump_arg in ('0', 'false', 'no', 'disable', 'off'):
+                enable_hexdump = False
+            elif hexdump_arg in ('1', 'true', 'yes', 'enable', 'on'):
+                enable_hexdump = True
+        
         log_info("🔬 Small-Trace 符号追踪")
         log_info(f"   目标: {so_name}::{symbol}")
+        log_info(f"   Hexdump: {'启用' if enable_hexdump else '禁用'}")
         
         # 获取 SmallTrace 管理器
         manager = get_smalltrace_manager()
@@ -1949,7 +1972,8 @@ def _handle_smalltrace_symbol_command(session, parts):
             symbol=symbol,
             trace_mode=0,  # 符号追踪
             args_count=args_count,
-            output_file=output_file
+            output_file=output_file,
+            enable_hexdump=enable_hexdump
         )
         
         script_content = manager.generate_trace_script(config)
