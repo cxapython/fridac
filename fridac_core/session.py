@@ -174,6 +174,7 @@ class FridacSession:
         self.device = None
         self.target_process = None
         self.running = False
+        self.app_name = None  # 当前连接的应用包名
         
         # 任务管理器 (多脚本管理)
         self.task_manager = None
@@ -345,6 +346,9 @@ class FridacSession:
     def connect_to_app(self, app_name, spawn_mode=False):
         """连接到目标应用"""
         try:
+            # 保存应用包名
+            self.app_name = app_name
+            
             # 获取 USB 设备并显示进度
             console = get_console()
             
@@ -1884,9 +1888,11 @@ def _handle_smalltrace_command(session, parts):
         
         # 保存配置供后续 pull 使用
         session._smalltrace_output = output_file
-        session._smalltrace_package = session.package_name if hasattr(session, 'package_name') else None
+        session._smalltrace_package = getattr(session, 'app_name', None)
         
         log_success("✅ Small-Trace 已启动")
+        log_info(f"   📦 目标应用: {session._smalltrace_package}")
+        log_info(f"   📁 输出文件: {output_file}")
         log_info("   触发目标函数后，使用 'smalltrace_pull' 拉取追踪日志")
         
     except Exception as e:
@@ -1933,9 +1939,11 @@ def _handle_smalltrace_symbol_command(session, parts):
         
         # 保存配置
         session._smalltrace_output = output_file
-        session._smalltrace_package = session.package_name if hasattr(session, 'package_name') else None
+        session._smalltrace_package = getattr(session, 'app_name', None)
         
         log_success("✅ Small-Trace 已启动")
+        log_info(f"   📦 目标应用: {session._smalltrace_package}")
+        log_info(f"   📁 输出文件: {output_file}")
         log_info("   触发目标函数后，使用 'smalltrace_pull' 拉取追踪日志")
         
     except Exception as e:
@@ -1947,14 +1955,25 @@ def _handle_smalltrace_pull_command(session, output_file):
     try:
         manager = get_smalltrace_manager()
         
-        # 获取包名
+        # 智能获取包名：优先使用已保存的配置，其次使用当前会话的 app_name
         package_name = getattr(session, '_smalltrace_package', None) or \
-                       getattr(session, 'package_name', None)
+                       getattr(session, 'app_name', None)
+        
+        # 智能获取输出文件：如果用户未指定，使用之前保存的路径
+        if output_file == os.path.expanduser("~/Desktop/qbdi_trace.log"):
+            saved_output = getattr(session, '_smalltrace_output', None)
+            if saved_output:
+                output_file = saved_output
         
         if not package_name:
-            log_error("❌ 未知应用包名，请指定包名")
+            log_error("❌ 未知应用包名")
+            log_info("   请先运行 smalltrace 命令，或指定包名:")
             log_info("   用法: smalltrace_pull <output_file> <package_name>")
             return
+        
+        log_info(f"📥 拉取追踪日志")
+        log_info(f"   📦 应用: {package_name}")
+        log_info(f"   📁 保存到: {output_file}")
         
         # 拉取日志
         if manager.pull_trace_log(package_name, output_file):
@@ -1995,10 +2014,18 @@ def _handle_smalltrace_status_command(session):
             log_info("   建议: adb shell su -c 'setenforce 0'")
         
         # 当前追踪配置
-        if hasattr(session, '_smalltrace_output'):
-            log_info(f"📁 输出文件: {session._smalltrace_output}")
-        if hasattr(session, '_smalltrace_package'):
-            log_info(f"📦 目标包名: {session._smalltrace_package}")
+        log_info("")
+        log_info("📋 当前追踪配置:")
+        package = getattr(session, '_smalltrace_package', None) or getattr(session, 'app_name', None)
+        output = getattr(session, '_smalltrace_output', None)
+        if package:
+            log_info(f"   📦 目标应用: {package}")
+        else:
+            log_warning("   📦 目标应用: 未设置 (请先运行 smalltrace 命令)")
+        if output:
+            log_info(f"   📁 输出文件: {output}")
+        else:
+            log_info(f"   📁 输出文件: ~/Desktop/qbdi_trace.log (默认)")
         
     except Exception as e:
         log_error(f"❌ 获取状态失败: {e}")
