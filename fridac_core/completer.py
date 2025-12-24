@@ -128,9 +128,10 @@ class FridacCompleter:
             'intelligentHookDispatcher': ('🎯 智能Hook目标', "intelligentHookDispatcher('com.example.MainActivity', {})"),
             
             # ===== Small-Trace (QBDI 汇编追踪) =====
-            'smalltrace': ('🔬 Small-Trace SO汇编追踪', "smalltrace libtarget.so 0x1234 output.log"),
-            'smalltrace_symbol': ('🔬 Small-Trace 符号追踪', "smalltrace_symbol libtarget.so functionName output.log"),
-            'smalltrace_pull': ('📥 拉取追踪日志', "smalltrace_pull output.log"),
+            'smalltrace': ('🔬 Small-Trace SO汇编追踪', "smalltrace libtarget.so 0x1234"),
+            'smalltrace_symbol': ('🔬 Small-Trace 符号追踪', "smalltrace_symbol libtarget.so functionName"),
+            'smalltrace_pull': ('📥 拉取追踪日志', "smalltrace_pull"),
+            'smalltrace_analyze': ('📊 分析追踪日志', "smalltrace_analyze ~/Desktop/trace.log"),
             'smalltrace_status': ('📊 Small-Trace 状态', "smalltrace_status"),
             
             # ===== Frida Stalker (指令级追踪) =====

@@ -33,7 +33,7 @@ from .completer import FridacCompleter, get_prompt_toolkit_available
 from .script_manager import create_frida_script, get_custom_script_manager
 from .task_manager import FridaTaskManager, TaskType, TaskStatus
 from .script_templates import ScriptTemplateEngine
-from .smalltrace import get_smalltrace_manager, SmallTraceConfig, parse_offset
+from .smalltrace import get_smalltrace_manager, SmallTraceConfig, parse_offset, analyze_trace_file, QBDITraceAnalyzer
 
 # prompt_toolkit 支持(内联提示）
 try:
@@ -1636,6 +1636,16 @@ def _handle_task_commands(session, user_input):
         _handle_smalltrace_status_command(session)
         return True
     
+    elif cmd == 'smalltrace_analyze':
+        # smalltrace_analyze [trace_file]
+        trace_file = parts[1] if len(parts) > 1 else getattr(session, '_smalltrace_output', None)
+        if not trace_file:
+            log_error("❌ 用法: smalltrace_analyze <trace_file>")
+            log_info("   示例: smalltrace_analyze ~/Desktop/qbdi_trace_xxx.log")
+            return True
+        _handle_smalltrace_analyze_command(os.path.expanduser(trace_file))
+        return True
+    
     elif cmd == 'stalker_trace':
         # stalker_trace <so_name> <offset> [output_file]
         if len(parts) < 3:
@@ -2002,6 +2012,34 @@ def _handle_smalltrace_pull_command(session, output_file):
         
     except Exception as e:
         log_error(f"❌ 拉取追踪日志失败: {e}")
+
+
+def _handle_smalltrace_analyze_command(trace_file: str):
+    """处理 smalltrace_analyze 分析命令"""
+    try:
+        if not os.path.exists(trace_file):
+            log_error(f"❌ 文件不存在: {trace_file}")
+            return
+        
+        # 检查文件大小，决定是否使用快速模式
+        file_size = os.path.getsize(trace_file)
+        quick_mode = file_size > 10 * 1024 * 1024  # > 10MB 用快速模式
+        
+        if quick_mode:
+            log_info(f"📊 文件较大 ({file_size // 1024 // 1024}MB)，使用快速模式分析...")
+        
+        analyzer = analyze_trace_file(trace_file, quick_mode=quick_mode)
+        
+        if analyzer:
+            # 保存分析器供后续使用
+            log_info("")
+            log_info("💡 提示: 可使用以下命令进一步分析:")
+            log_info("   - 查找特定偏移的指令: analyzer.find_instruction_at_offset(0x1234)")
+            log_info("   - 查找内存访问: analyzer.find_memory_access_at_address(0x...)")
+            log_info("   - 导出指令: analyzer.export_instructions_to_file('output.txt')")
+        
+    except Exception as e:
+        log_error(f"❌ 分析失败: {e}")
 
 
 def _handle_smalltrace_status_command(session):

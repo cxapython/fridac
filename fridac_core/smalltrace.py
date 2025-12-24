@@ -502,3 +502,357 @@ def parse_offset(offset_str: str) -> int:
         except ValueError:
             return int(offset_str, 16)
 
+
+# ===== QBDI Trace 文件解析器 =====
+
+@dataclass
+class TraceInstruction:
+    """单条指令记录"""
+    address: int          # 绝对地址
+    offset: int           # 模块内偏移
+    mnemonic: str         # 指令助记符
+    operands: str         # 操作数
+    reg_changes: str      # 寄存器变化
+    line_num: int         # 行号
+
+
+@dataclass
+class MemoryAccess:
+    """内存访问记录"""
+    access_type: str      # 'read' 或 'write'
+    address: int          # 访问地址
+    inst_address: int     # 指令地址
+    data_size: int        # 数据大小
+    data_value: int       # 数据值
+    line_num: int         # 行号
+
+
+@dataclass
+class FunctionCall:
+    """函数调用记录"""
+    target_address: int   # 目标地址
+    enter_line: int       # 入口行号
+    leave_line: int       # 出口行号
+    instructions: int     # 指令数量
+    mem_reads: int        # 内存读取次数
+    mem_writes: int       # 内存写入次数
+
+
+class QBDITraceAnalyzer:
+    """
+    QBDI Trace 文件解析器
+    
+    文件结构：
+    1. 头部: [hook] target=0x... argc=...
+    2. 入口: ====== ENTER 0x... ======
+    3. 指令: 0x地址  偏移  汇编指令  ;寄存器变化
+    4. 内存: memory read/write at 0x..., ...
+    5. Dump: hexdump 格式的内存块
+    6. 出口: ====== LEAVE 0x... ======
+    7. 结果: [gqb] vm.call ok=..., ret=...
+    """
+    
+    def __init__(self, trace_file: str):
+        self.trace_file = trace_file
+        self.target_address: Optional[int] = None
+        self.argc: int = 0
+        self.return_value: Optional[int] = None
+        self.call_success: bool = False
+        
+        self.instructions: List[TraceInstruction] = []
+        self.memory_accesses: List[MemoryAccess] = []
+        self.function_calls: List[FunctionCall] = []
+        
+        # 统计信息
+        self.total_lines: int = 0
+        self.instruction_count: int = 0
+        self.mem_read_count: int = 0
+        self.mem_write_count: int = 0
+        
+        # 模块地址范围 (用于计算偏移)
+        self.modules: Dict[str, Tuple[int, int]] = {}  # name -> (base, end)
+        
+        # 指令分布
+        self.instruction_types: Dict[str, int] = {}  # mnemonic -> count
+        
+        # 内存访问热点
+        self.mem_access_hotspots: Dict[int, int] = {}  # address -> access_count
+    
+    def parse(self, quick_mode: bool = False) -> bool:
+        """
+        解析 trace 文件
+        
+        Args:
+            quick_mode: True=仅统计不存储详细数据 (大文件推荐)
+        """
+        if not os.path.exists(self.trace_file):
+            log_error(f"文件不存在: {self.trace_file}")
+            return False
+        
+        log_info(f"📊 解析 QBDI Trace 文件...")
+        log_info(f"   文件: {self.trace_file}")
+        
+        current_func_enter_line = 0
+        current_func_instructions = 0
+        current_func_reads = 0
+        current_func_writes = 0
+        
+        try:
+            with open(self.trace_file, 'r', errors='ignore') as f:
+                for line_num, line in enumerate(f, 1):
+                    self.total_lines += 1
+                    line = line.strip()
+                    
+                    # 1. 解析头部 [hook]
+                    if line.startswith('[hook]'):
+                        self._parse_hook_header(line)
+                    
+                    # 2. 解析函数入口
+                    elif line.startswith('====== ENTER'):
+                        addr_match = re.search(r'ENTER\s+(0x[0-9a-fA-F]+)', line)
+                        if addr_match:
+                            addr = int(addr_match.group(1), 16)
+                            current_func_enter_line = line_num
+                            current_func_instructions = 0
+                            current_func_reads = 0
+                            current_func_writes = 0
+                    
+                    # 3. 解析函数出口
+                    elif line.startswith('====== LEAVE') or line.startswith('======  LEAVE'):
+                        addr_match = re.search(r'LEAVE\s+(0x[0-9a-fA-F]+)', line)
+                        if addr_match:
+                            addr = int(addr_match.group(1), 16)
+                            self.function_calls.append(FunctionCall(
+                                target_address=addr,
+                                enter_line=current_func_enter_line,
+                                leave_line=line_num,
+                                instructions=current_func_instructions,
+                                mem_reads=current_func_reads,
+                                mem_writes=current_func_writes
+                            ))
+                    
+                    # 4. 解析指令
+                    elif line.startswith('0x') and '\t' in line:
+                        self.instruction_count += 1
+                        current_func_instructions += 1
+                        inst = self._parse_instruction(line, line_num)
+                        if inst:
+                            # 统计指令类型
+                            mnemonic = inst.mnemonic.split('.')[0]  # 去掉条件码
+                            self.instruction_types[mnemonic] = self.instruction_types.get(mnemonic, 0) + 1
+                            if not quick_mode:
+                                self.instructions.append(inst)
+                    
+                    # 5. 解析内存访问
+                    elif line.startswith('memory read') or line.startswith('memory write'):
+                        access = self._parse_memory_access(line, line_num)
+                        if access:
+                            if access.access_type == 'read':
+                                self.mem_read_count += 1
+                                current_func_reads += 1
+                            else:
+                                self.mem_write_count += 1
+                                current_func_writes += 1
+                            
+                            # 统计热点
+                            page_addr = access.address & ~0xFFF  # 4KB 页对齐
+                            self.mem_access_hotspots[page_addr] = self.mem_access_hotspots.get(page_addr, 0) + 1
+                            
+                            if not quick_mode:
+                                self.memory_accesses.append(access)
+                    
+                    # 6. 解析结果
+                    elif line.startswith('[gqb] vm.call'):
+                        self._parse_result(line)
+            
+            log_success(f"✅ 解析完成")
+            return True
+            
+        except Exception as e:
+            log_error(f"解析失败: {e}")
+            return False
+    
+    def _parse_hook_header(self, line: str):
+        """解析 [hook] 头部"""
+        # [hook] target=0x7dd0462244 argc=5
+        target_match = re.search(r'target=(0x[0-9a-fA-F]+)', line)
+        argc_match = re.search(r'argc=(\d+)', line)
+        if target_match:
+            self.target_address = int(target_match.group(1), 16)
+        if argc_match:
+            self.argc = int(argc_match.group(1))
+    
+    def _parse_instruction(self, line: str, line_num: int) -> Optional[TraceInstruction]:
+        """解析指令行"""
+        # 0x0000007dd0462244	0x21244			ldr	x16, #8	;X16=0x0 -> 0x7e9c983100
+        try:
+            parts = line.split('\t')
+            if len(parts) < 3:
+                return None
+            
+            address = int(parts[0], 16)
+            offset = int(parts[1], 16)
+            
+            # 汇编部分可能有分号注释
+            asm_and_comment = '\t'.join(parts[2:])
+            if ';' in asm_and_comment:
+                asm_part, reg_changes = asm_and_comment.rsplit(';', 1)
+            else:
+                asm_part, reg_changes = asm_and_comment, ''
+            
+            # 分离助记符和操作数
+            asm_parts = asm_part.strip().split(None, 1)
+            mnemonic = asm_parts[0] if asm_parts else ''
+            operands = asm_parts[1] if len(asm_parts) > 1 else ''
+            
+            return TraceInstruction(
+                address=address,
+                offset=offset,
+                mnemonic=mnemonic,
+                operands=operands,
+                reg_changes=reg_changes.strip(),
+                line_num=line_num
+            )
+        except Exception:
+            return None
+    
+    def _parse_memory_access(self, line: str, line_num: int) -> Optional[MemoryAccess]:
+        """解析内存访问行"""
+        # memory read at 0x7dd046224c, instruction address = 0x7dd0462244, data size = 8, data value = 0031989c7e000000
+        try:
+            access_type = 'read' if 'memory read' in line else 'write'
+            
+            addr_match = re.search(r'at\s+(0x[0-9a-fA-F]+)', line)
+            inst_match = re.search(r'instruction address\s*=\s*(0x[0-9a-fA-F]+)', line)
+            size_match = re.search(r'data size\s*=\s*(\d+)', line)
+            value_match = re.search(r'data value\s*=\s*([0-9a-fA-F]+)', line)
+            
+            if not all([addr_match, inst_match, size_match, value_match]):
+                return None
+            
+            return MemoryAccess(
+                access_type=access_type,
+                address=int(addr_match.group(1), 16),
+                inst_address=int(inst_match.group(1), 16),
+                data_size=int(size_match.group(1)),
+                data_value=int(value_match.group(1), 16),
+                line_num=line_num
+            )
+        except Exception:
+            return None
+    
+    def _parse_result(self, line: str):
+        """解析结果行"""
+        # [gqb] vm.call ok=1, ret=0x1
+        ok_match = re.search(r'ok=(\d+)', line)
+        ret_match = re.search(r'ret=(0x[0-9a-fA-F]+)', line)
+        if ok_match:
+            self.call_success = ok_match.group(1) == '1'
+        if ret_match:
+            self.return_value = int(ret_match.group(1), 16)
+    
+    def print_summary(self):
+        """打印分析摘要"""
+        log_info("")
+        log_info("╔════════════════════════════════════════════════════════════╗")
+        log_info("║               QBDI Trace 分析报告                           ║")
+        log_info("╚════════════════════════════════════════════════════════════╝")
+        
+        # 基本信息
+        log_info("")
+        log_info("📋 基本信息:")
+        log_info(f"   目标地址: {hex(self.target_address) if self.target_address else 'N/A'}")
+        log_info(f"   参数数量: {self.argc}")
+        log_info(f"   执行结果: {'✅ 成功' if self.call_success else '❌ 失败'}")
+        if self.return_value is not None:
+            log_info(f"   返回值: {hex(self.return_value)} ({self.return_value})")
+        
+        # 统计信息
+        log_info("")
+        log_info("📊 统计信息:")
+        log_info(f"   总行数: {self.total_lines:,}")
+        log_info(f"   指令数: {self.instruction_count:,}")
+        log_info(f"   内存读: {self.mem_read_count:,}")
+        log_info(f"   内存写: {self.mem_write_count:,}")
+        log_info(f"   函数调用: {len(self.function_calls)}")
+        
+        # 指令类型 Top 10
+        log_info("")
+        log_info("📈 指令类型 Top 10:")
+        sorted_types = sorted(self.instruction_types.items(), key=lambda x: x[1], reverse=True)[:10]
+        for i, (mnemonic, count) in enumerate(sorted_types, 1):
+            pct = count * 100 / self.instruction_count if self.instruction_count > 0 else 0
+            bar = '█' * int(pct / 5) + '░' * (20 - int(pct / 5))
+            log_info(f"   {i:2d}. {mnemonic:8s} {count:8,} ({pct:5.1f}%) {bar}")
+        
+        # 内存访问热点
+        if self.mem_access_hotspots:
+            log_info("")
+            log_info("🔥 内存访问热点 (Top 5 页):")
+            sorted_hotspots = sorted(self.mem_access_hotspots.items(), key=lambda x: x[1], reverse=True)[:5]
+            for addr, count in sorted_hotspots:
+                log_info(f"   {hex(addr)}: {count:,} 次访问")
+        
+        # 函数调用信息
+        if self.function_calls:
+            log_info("")
+            log_info("📞 函数调用概览:")
+            for i, call in enumerate(self.function_calls[:5], 1):
+                log_info(f"   {i}. {hex(call.target_address)}")
+                log_info(f"      指令: {call.instructions:,}, 内存读: {call.mem_reads:,}, 内存写: {call.mem_writes:,}")
+                log_info(f"      行范围: {call.enter_line:,} - {call.leave_line:,}")
+            if len(self.function_calls) > 5:
+                log_info(f"   ... 还有 {len(self.function_calls) - 5} 个调用")
+    
+    def find_instruction_at_offset(self, offset: int) -> List[TraceInstruction]:
+        """根据偏移查找指令"""
+        return [inst for inst in self.instructions if inst.offset == offset]
+    
+    def find_memory_access_at_address(self, address: int) -> List[MemoryAccess]:
+        """根据地址查找内存访问"""
+        return [ma for ma in self.memory_accesses if ma.address == address]
+    
+    def get_instruction_at_line(self, line_num: int) -> Optional[TraceInstruction]:
+        """根据行号获取指令"""
+        for inst in self.instructions:
+            if inst.line_num == line_num:
+                return inst
+        return None
+    
+    def export_instructions_to_file(self, output_file: str, offset_filter: int = None):
+        """导出指令到文件 (可选按偏移过滤)"""
+        with open(output_file, 'w') as f:
+            f.write("# QBDI Trace Instructions Export\n")
+            f.write(f"# Source: {self.trace_file}\n")
+            f.write(f"# Target: {hex(self.target_address) if self.target_address else 'N/A'}\n")
+            f.write("#\n")
+            f.write("# Line | Address          | Offset   | Instruction\n")
+            f.write("# " + "-" * 70 + "\n")
+            
+            for inst in self.instructions:
+                if offset_filter is not None and inst.offset != offset_filter:
+                    continue
+                f.write(f"{inst.line_num:6d} | {hex(inst.address):18s} | {hex(inst.offset):8s} | {inst.mnemonic} {inst.operands}\n")
+                if inst.reg_changes:
+                    f.write(f"       |                    |          | ; {inst.reg_changes}\n")
+        
+        log_success(f"✅ 指令已导出到: {output_file}")
+
+
+def analyze_trace_file(trace_file: str, quick_mode: bool = True) -> Optional[QBDITraceAnalyzer]:
+    """
+    分析 trace 文件的便捷函数
+    
+    Args:
+        trace_file: trace 文件路径
+        quick_mode: True=快速模式(仅统计), False=完整模式(存储所有数据)
+    
+    Returns:
+        QBDITraceAnalyzer 实例
+    """
+    analyzer = QBDITraceAnalyzer(trace_file)
+    if analyzer.parse(quick_mode=quick_mode):
+        analyzer.print_summary()
+        return analyzer
+    return None
+
