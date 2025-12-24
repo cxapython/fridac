@@ -33,8 +33,8 @@ LIBQDBI_DOWNLOAD_URLS = [
 # 追踪库在设备上的路径
 LIBQDBI_DEVICE_PATH = "/data/local/tmp/libqdbi.so"
 
-# 追踪输出文件格式
-DEFAULT_TRACE_OUTPUT = "/data/data/{package}/qbdi_trace.log"
+# 追踪输出文件格式 (包含 package name)
+DEFAULT_TRACE_OUTPUT = "/data/data/{package}/qbdi_trace_{package}.log"
 
 
 def get_binaries_dir() -> str:
@@ -330,7 +330,7 @@ class SmallTraceManager:
                     console.log("");
                     console.log("═══════════════════════════════════════════════════════════════");
                     console.log("  Small-Trace 已启动！");
-                    console.log("  追踪输出保存在设备: /data/data/<package>/qbdi_trace.log");
+                    console.log("  追踪输出保存在设备: /data/data/<package>/qbdi_trace_<package>.log");
                     console.log("  查看命令: adb logcat | grep -iE 'SmallTrace|GQB|QBDI'");
                     console.log("═══════════════════════════════════════════════════════════════");
                 }} catch (e) {{
@@ -427,13 +427,14 @@ class SmallTraceManager:
         """
         log_info(f"📥 拉取追踪日志...")
         
-        remote_path = f"/data/data/{package_name}/qbdi_trace.log"
+        # 日志文件名包含 package name
+        remote_path = f"/data/data/{package_name}/qbdi_trace_{package_name}.log"
         
         # 先复制到 /sdcard (需要 root)
-        self._run_adb_shell(f'cp {remote_path} /sdcard/qbdi_trace.log', as_root=True)
+        self._run_adb_shell(f'cp {remote_path} /sdcard/qbdi_trace_{package_name}.log', as_root=True)
         
         # 拉取到本地
-        code, stdout, stderr = self._run_adb('pull', '/sdcard/qbdi_trace.log', output_file)
+        code, stdout, stderr = self._run_adb('pull', f'/sdcard/qbdi_trace_{package_name}.log', output_file)
         if code != 0:
             # 尝试直接用 su 读取
             code, content, _ = self._run_adb_shell(f'cat {remote_path}', as_root=True)
