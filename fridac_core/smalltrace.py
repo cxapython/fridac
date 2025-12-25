@@ -77,6 +77,9 @@ class SmallTraceConfig:
     show_hexdump: bool = False      # 是否显示 hexdump 内容 (默认关闭)
     jni_trace: bool = False         # 是否启用 JNI 追踪 (默认关闭)
     syscall_trace: bool = False     # 是否启用 Syscall 追踪 (默认关闭)
+    # 新增: 日志级别控制 (0=关闭, 1=简洁, 2=详细)
+    jni_log_level: int = 2          # JNI 日志级别 (默认详细)
+    syscall_log_level: int = 2      # Syscall 日志级别 (默认详细)
 
 
 class SmallTraceManager:
@@ -274,6 +277,8 @@ class SmallTraceManager:
         hexdump_flag = 1 if config.show_hexdump else 0
         jni_trace_flag = 1 if config.jni_trace else 0
         syscall_trace_flag = 1 if config.syscall_trace else 0
+        jni_log_level = config.jni_log_level
+        syscall_log_level = config.syscall_log_level
         
         script = f'''// Small-Trace 追踪脚本 (由 fridac 生成)
 // 目标: {config.so_name} @ 0x{config.offset:x} ({config.symbol or 'offset'})
@@ -288,6 +293,8 @@ class SmallTraceManager:
     const show_hexdump = {hexdump_flag};  // hexdump 显示开关
     const jni_trace = {jni_trace_flag};    // JNI 追踪开关
     const syscall_trace = {syscall_trace_flag};  // Syscall 追踪开关
+    const jni_log_level = {jni_log_level};  // JNI 日志级别 (0=关闭, 1=简洁, 2=详细)
+    const syscall_log_level = {syscall_log_level};  // Syscall 日志级别
     
     let Calvin_Trace_symbol_ex = null;
     let Calvin_Trace_offset_ex = null;
@@ -297,6 +304,8 @@ class SmallTraceManager:
     let gqb_disable_jni_trace = null;
     let gqb_enable_syscall_trace = null;
     let gqb_disable_syscall_trace = null;
+    let gqb_set_jni_log_level = null;
+    let gqb_set_syscall_log_level = null;
     let gqb_print_jni_stats = null;
     let gqb_print_syscall_stats = null;
     let isTraceSoLoaded = false;
@@ -313,14 +322,22 @@ class SmallTraceManager:
     }}
     console.log("[*] 参数数量: " + args);
     console.log("[*] Hexdump: " + (show_hexdump ? "开启" : "关闭"));
-    console.log("[*] JNI 追踪: " + (jni_trace ? "开启" : "关闭"));
-    console.log("[*] Syscall 追踪: " + (syscall_trace ? "开启" : "关闭"));
+    console.log("[*] JNI 追踪: " + (jni_trace ? "开启 (级别:" + jni_log_level + ")" : "关闭"));
+    console.log("[*] Syscall 追踪: " + (syscall_trace ? "开启 (级别:" + syscall_log_level + ")" : "关闭"));
+    console.log("[*] 日志级别说明: 0=关闭, 1=简洁(一行), 2=详细(展开)");
     console.log("");
     
     function setupJniSyscallTrace() {{
         // 设置 JNI 追踪
         if (jni_trace && gqb_enable_jni_trace) {{
             try {{
+                // 先设置日志级别
+                if (gqb_set_jni_log_level) {{
+                    const setLevel = new NativeFunction(gqb_set_jni_log_level, 'void', ['int']);
+                    setLevel(jni_log_level);
+                    console.log("[+] JNI 日志级别: " + jni_log_level + " (" + (jni_log_level == 1 ? "简洁" : "详细") + ")");
+                }}
+                
                 const enableJni = new NativeFunction(gqb_enable_jni_trace, 'void', []);
                 enableJni();
                 console.log("[+] JNI 追踪已启用");
@@ -332,6 +349,13 @@ class SmallTraceManager:
         // 设置 Syscall 追踪
         if (syscall_trace && gqb_enable_syscall_trace) {{
             try {{
+                // 先设置日志级别
+                if (gqb_set_syscall_log_level) {{
+                    const setLevel = new NativeFunction(gqb_set_syscall_log_level, 'void', ['int']);
+                    setLevel(syscall_log_level);
+                    console.log("[+] Syscall 日志级别: " + syscall_log_level + " (" + (syscall_log_level == 1 ? "简洁" : "详细") + ")");
+                }}
+                
                 const enableSyscall = new NativeFunction(gqb_enable_syscall_trace, 'void', []);
                 enableSyscall();
                 console.log("[+] Syscall 追踪已启用");
@@ -430,6 +454,8 @@ class SmallTraceManager:
             gqb_disable_jni_trace = Module.findExportByName(TraceSoPath, 'gqb_disable_jni_trace');
             gqb_enable_syscall_trace = Module.findExportByName(TraceSoPath, 'gqb_enable_syscall_trace');
             gqb_disable_syscall_trace = Module.findExportByName(TraceSoPath, 'gqb_disable_syscall_trace');
+            gqb_set_jni_log_level = Module.findExportByName(TraceSoPath, 'gqb_set_jni_log_level');
+            gqb_set_syscall_log_level = Module.findExportByName(TraceSoPath, 'gqb_set_syscall_log_level');
             gqb_print_jni_stats = Module.findExportByName(TraceSoPath, 'gqb_print_jni_stats');
             gqb_print_syscall_stats = Module.findExportByName(TraceSoPath, 'gqb_print_syscall_stats');
             
@@ -480,6 +506,8 @@ class SmallTraceManager:
                             // 获取 JNI/Syscall 追踪函数
                             gqb_enable_jni_trace = Module.findExportByName(TraceSoPath, 'gqb_enable_jni_trace');
                             gqb_enable_syscall_trace = Module.findExportByName(TraceSoPath, 'gqb_enable_syscall_trace');
+                            gqb_set_jni_log_level = Module.findExportByName(TraceSoPath, 'gqb_set_jni_log_level');
+                            gqb_set_syscall_log_level = Module.findExportByName(TraceSoPath, 'gqb_set_syscall_log_level');
                             gqb_print_jni_stats = Module.findExportByName(TraceSoPath, 'gqb_print_jni_stats');
                             gqb_print_syscall_stats = Module.findExportByName(TraceSoPath, 'gqb_print_syscall_stats');
                             
