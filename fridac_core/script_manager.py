@@ -439,18 +439,6 @@ function help() {
     LOG("    🔧 Syscall追踪: 自动检测 openat, read, write, mmap 等", { c: Color.Cyan });
     LOG("    smalltrace_analyze <trace_file> - 分析追踪日志", { c: Color.White });
     LOG("    smalltrace_status - 查看 Small-Trace 状态", { c: Color.White });
-    LOG("  🚀 ARM64DBI (增强版追踪，支持 JNI/Syscall):", { c: Color.Blue });
-    LOG("    arm64dbi <so_name> <offset> [jni=true] [syscall=true] [hexdump=true] - SO汇编追踪", { c: Color.White });
-    LOG("      示例: arm64dbi libnative.so 0x1234", { c: Color.Yellow });
-    LOG("      示例: arm64dbi libnative.so 0x1234 jni=true syscall=true", { c: Color.Yellow });
-    LOG("    arm64dbi_symbol <so_name> <symbol> [jni=true] [syscall=true] - 符号追踪", { c: Color.White });
-    LOG("      示例: arm64dbi_symbol libnative.so encrypt jni=true", { c: Color.Yellow });
-    LOG("    arm64dbi_pull [output_file] - 拉取追踪日志到本地", { c: Color.White });
-    LOG("    arm64dbi_status - 查看 ARM64DBI 状态", { c: Color.White });
-    LOG("  💡 ARM64DBI 相比 Small-Trace 的优势:", { c: Color.Gray });
-    LOG("    • JNI 追踪: 自动解析 FindClass/GetMethodID/RegisterNatives 参数", { c: Color.Gray });
-    LOG("    • Syscall 追踪: 检测 SVC 指令并解析系统调用", { c: Color.Gray });
-    LOG("    • 高性能日志: mmap 零拷贝 (1分钟1.5GB)", { c: Color.Gray });
     
     LOG("\\n📋 任务管理系统:", { c: Color.Red });
     LOG("  jobs() - 显示所有活跃的Hook任务", { c: Color.White });

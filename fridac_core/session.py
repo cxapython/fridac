@@ -34,7 +34,8 @@ from .script_manager import create_frida_script, get_custom_script_manager
 from .task_manager import FridaTaskManager, TaskType, TaskStatus
 from .script_templates import ScriptTemplateEngine
 from .smalltrace import get_smalltrace_manager, SmallTraceConfig, parse_offset, analyze_trace_file, QBDITraceAnalyzer
-from .arm64dbi import get_arm64dbi_manager, ARM64DBIConfig
+# ARM64DBI 功能暂时隐藏 (项目仅供学习使用)
+# from .arm64dbi import get_arm64dbi_manager, ARM64DBIConfig
 
 # prompt_toolkit 支持(内联提示）
 try:
@@ -1673,52 +1674,17 @@ def _handle_task_commands(session, user_input):
         _handle_stalker_trace_command(session, parts)
         return True
     
-    # ===== ARM64DBI (增强版追踪，支持 JNI/Syscall) =====
-    elif cmd == 'arm64dbi':
-        # arm64dbi <so_name> <offset> [options...]
-        if len(parts) < 3:
-            log_error("❌ 用法: arm64dbi <so_name> <offset> [jni=true] [syscall=true] [hexdump=true]")
-            log_info("   示例: arm64dbi libnative.so 0x1234")
-            log_info("   示例: arm64dbi libnative.so 0x1234 jni=true syscall=true")
-            log_info("")
-            log_info("   💡 ARM64DBI 相比 smalltrace 的优势:")
-            log_info("      - JNI 追踪: 自动解析 FindClass/GetMethodID/RegisterNatives 参数")
-            log_info("      - Syscall 追踪: 检测 SVC 指令并解析系统调用")
-            log_info("      - 高性能日志: mmap 零拷贝 (1分钟1.5GB)")
-            return True
-        
-        _handle_arm64dbi_command(session, parts)
-        return True
-    
-    elif cmd == 'arm64dbi_symbol':
-        # arm64dbi_symbol <so_name> <symbol> [options...]
-        if len(parts) < 3:
-            log_error("❌ 用法: arm64dbi_symbol <so_name> <symbol> [jni=true] [syscall=true]")
-            log_info("   示例: arm64dbi_symbol libnative.so encrypt jni=true")
-            return True
-        
-        _handle_arm64dbi_symbol_command(session, parts)
-        return True
-    
-    elif cmd == 'arm64dbi_status':
-        _handle_arm64dbi_status_command(session)
-        return True
-    
-    elif cmd == 'arm64dbi_push':
-        # 强制重新推送 libarm64dbi.so
-        log_info("📲 强制推送 libarm64dbi.so 到设备...")
-        manager = get_arm64dbi_manager()
-        if manager.push_libarm64dbi():
-            log_success("✅ 推送成功！请重新运行 arm64dbi 命令")
-        else:
-            log_error("❌ 推送失败")
-        return True
-    
-    elif cmd == 'arm64dbi_pull':
-        # arm64dbi_pull [output_file]
-        output_file = parts[1] if len(parts) > 1 else None
-        _handle_arm64dbi_pull_command(session, output_file)
-        return True
+    # ===== ARM64DBI 功能暂时隐藏 (项目仅供学习使用) =====
+    # elif cmd == 'arm64dbi':
+    #     ...
+    # elif cmd == 'arm64dbi_symbol':
+    #     ...
+    # elif cmd == 'arm64dbi_status':
+    #     ...
+    # elif cmd == 'arm64dbi_push':
+    #     ...
+    # elif cmd == 'arm64dbi_pull':
+    #     ...
     
     # 检查是否是自定义函数命令
     elif _handle_custom_function_command(session, cmd, parts):
@@ -2278,272 +2244,12 @@ def _handle_stalker_trace_command(session, parts):
         log_error(f"❌ Stalker 追踪启动失败: {e}")
 
 
-# ===== ARM64DBI 命令处理函数 =====
-
-def _handle_arm64dbi_command(session, parts):
-    """处理 arm64dbi 偏移追踪命令"""
-    try:
-        so_name = parts[1]
-        offset = parse_offset(parts[2])
-        
-        # 解析选项
-        enable_jni = False
-        enable_syscall = False
-        enable_hexdump = False
-        enable_fast_log = False
-        args_count = 5
-        
-        for opt in parts[3:]:
-            opt_lower = opt.lower()
-            if opt_lower.startswith('jni='):
-                enable_jni = opt_lower.split('=')[1] in ['true', '1', 'on']
-            elif opt_lower.startswith('syscall='):
-                enable_syscall = opt_lower.split('=')[1] in ['true', '1', 'on']
-            elif opt_lower.startswith('hexdump='):
-                enable_hexdump = opt_lower.split('=')[1] in ['true', '1', 'on']
-            elif opt_lower.startswith('fastlog='):
-                enable_fast_log = opt_lower.split('=')[1] in ['true', '1', 'on']
-            elif opt_lower.startswith('args='):
-                args_count = int(opt_lower.split('=')[1])
-        
-        log_info("🔧 ARM64DBI 增强追踪")
-        log_info(f"   目标: {so_name} @ 0x{offset:x}")
-        log_info(f"   JNI 追踪: {'✅' if enable_jni else '❌'}")
-        log_info(f"   Syscall 追踪: {'✅' if enable_syscall else '❌'}")
-        
-        manager = get_arm64dbi_manager()
-        
-        # 确保追踪库可用
-        if not manager.ensure_libarm64dbi():
-            log_error("❌ ARM64DBI 追踪库不可用")
-            return
-        
-        # 关闭 SELinux
-        manager.disable_selinux()
-        
-        # 生成追踪脚本
-        config = ARM64DBIConfig(
-            so_name=so_name,
-            offset=offset,
-            trace_mode=1,  # 偏移模式
-            args_count=args_count,
-            enable_jni_trace=enable_jni,
-            enable_syscall_trace=enable_syscall,
-            enable_hexdump=enable_hexdump,
-            enable_fast_log=enable_fast_log
-        )
-        
-        script_content = manager.generate_trace_script(config)
-        
-        # 执行脚本
-        session.execute_js(script_content)
-        
-        log_success("✅ ARM64DBI 追踪已启动")
-        log_info("   触发目标函数后:")
-        log_info("   1. 使用 'arm64dbi_pull' 拉取追踪日志到本地")
-        log_info("   2. 或用 logcat 实时查看: adb logcat | grep -iE 'DBI|JNI|SVC'")
-        
-    except Exception as e:
-        log_error(f"❌ ARM64DBI 启动失败: {e}")
-
-
-def _handle_arm64dbi_symbol_command(session, parts):
-    """处理 arm64dbi_symbol 符号追踪命令"""
-    try:
-        so_name = parts[1]
-        symbol = parts[2]
-        
-        # 解析选项
-        enable_jni = False
-        enable_syscall = False
-        enable_hexdump = False
-        enable_fast_log = False
-        args_count = 5
-        
-        for opt in parts[3:]:
-            opt_lower = opt.lower()
-            if opt_lower.startswith('jni='):
-                enable_jni = opt_lower.split('=')[1] in ['true', '1', 'on']
-            elif opt_lower.startswith('syscall='):
-                enable_syscall = opt_lower.split('=')[1] in ['true', '1', 'on']
-            elif opt_lower.startswith('hexdump='):
-                enable_hexdump = opt_lower.split('=')[1] in ['true', '1', 'on']
-            elif opt_lower.startswith('fastlog='):
-                enable_fast_log = opt_lower.split('=')[1] in ['true', '1', 'on']
-            elif opt_lower.startswith('args='):
-                args_count = int(opt_lower.split('=')[1])
-        
-        log_info("🔧 ARM64DBI 增强追踪 (符号模式)")
-        log_info(f"   目标: {so_name}::{symbol}")
-        log_info(f"   JNI 追踪: {'✅' if enable_jni else '❌'}")
-        log_info(f"   Syscall 追踪: {'✅' if enable_syscall else '❌'}")
-        
-        manager = get_arm64dbi_manager()
-        
-        # 确保追踪库可用
-        if not manager.ensure_libarm64dbi():
-            log_error("❌ ARM64DBI 追踪库不可用")
-            return
-        
-        # 关闭 SELinux
-        manager.disable_selinux()
-        
-        # 生成追踪脚本
-        config = ARM64DBIConfig(
-            so_name=so_name,
-            symbol=symbol,
-            trace_mode=0,  # 符号模式
-            args_count=args_count,
-            enable_jni_trace=enable_jni,
-            enable_syscall_trace=enable_syscall,
-            enable_hexdump=enable_hexdump,
-            enable_fast_log=enable_fast_log
-        )
-        
-        script_content = manager.generate_trace_script(config)
-        
-        # 执行脚本
-        session.execute_js(script_content)
-        
-        log_success("✅ ARM64DBI 追踪已启动")
-        log_info("   触发目标函数后:")
-        log_info("   1. 使用 'arm64dbi_pull' 拉取追踪日志到本地")
-        log_info("   2. 或用 logcat 实时查看: adb logcat | grep -iE 'DBI|JNI|SVC'")
-        
-    except Exception as e:
-        log_error(f"❌ ARM64DBI 启动失败: {e}")
-
-
-def _handle_arm64dbi_status_command(session):
-    """处理 arm64dbi_status 状态命令"""
-    try:
-        manager = get_arm64dbi_manager()
-        
-        log_info("📊 ARM64DBI 状态")
-        log_info("=" * 50)
-        
-        # 检查追踪库
-        if manager.check_libarm64dbi():
-            log_success("✅ ARM64DBI 追踪库: 已就绪")
-            
-            # 检查导出符号
-            log_info("")
-            log_info("🔍 检查核心导出符号...")
-            required_symbols = ['dbi_init', 'dbi_trace_offset', 'dbi_trace_symbol', 'dbi_version']
-            code, stdout, _ = manager._run_adb_shell(
-                'nm -D /data/local/tmp/libarm64dbi.so 2>/dev/null | grep -E "dbi_init|dbi_trace_offset|dbi_trace_symbol|dbi_version"'
-            )
-            if code == 0 and stdout:
-                found_symbols = []
-                for line in stdout.split('\n'):
-                    for sym in required_symbols:
-                        if sym in line:
-                            found_symbols.append(sym)
-                            log_success(f"   ✅ {sym}")
-                
-                missing = set(required_symbols) - set(found_symbols)
-                for sym in missing:
-                    log_error(f"   ❌ {sym} 缺失!")
-                
-                if missing:
-                    log_warning("⚠️ 设备上的 libarm64dbi.so 缺少核心函数！")
-                    log_info("   请重新推送: arm64dbi_push")
-            else:
-                log_warning("⚠️ 无法检查导出符号 (可能缺少 nm 工具)")
-                log_info("   尝试在 Frida 中检查...")
-        else:
-            log_warning("⚠️ ARM64DBI 追踪库: 未安装")
-            log_info("   请从 ARM64DBIDemo 项目编译并复制到 fridac/binaries/arm64/libarm64dbi.so")
-        
-        # 检查 SELinux
-        code, stdout, _ = manager._run_adb_shell('getenforce')
-        selinux_status = stdout.strip() if code == 0 else "未知"
-        if 'Permissive' in selinux_status or 'Disabled' in selinux_status:
-            log_success(f"✅ SELinux: {selinux_status}")
-        else:
-            log_warning(f"⚠️ SELinux: {selinux_status}")
-            log_info("   建议: adb shell su -c 'setenforce 0'")
-        
-        log_info("")
-        log_info("💡 ARM64DBI vs Small-Trace 对比:")
-        log_info("   ┌────────────────┬────────────────┬────────────────┐")
-        log_info("   │      特性      │   ARM64DBI     │   Small-Trace  │")
-        log_info("   ├────────────────┼────────────────┼────────────────┤")
-        log_info("   │ JNI 追踪       │      ✅        │       ❌       │")
-        log_info("   │ Syscall 追踪   │      ✅        │       ❌       │")
-        log_info("   │ 高性能日志     │      ✅        │       ❌       │")
-        log_info("   │ 二进制大小     │     ~25MB      │      ~18MB     │")
-        log_info("   │ 实现方式       │   纯 ARM64     │      QBDI      │")
-        log_info("   └────────────────┴────────────────┴────────────────┘")
-        
-        log_info("")
-        log_info("🔧 诊断命令:")
-        log_info("   arm64dbi_push    - 重新推送 libarm64dbi.so 到设备")
-        log_info("   arm64dbi_status  - 查看当前状态")
-        
-    except Exception as e:
-        log_error(f"❌ 获取状态失败: {e}")
-
-
-def _handle_arm64dbi_pull_command(session, output_file: str = None):
-    """处理 arm64dbi_pull 拉取日志命令"""
-    import os
-    import time
-    
-    try:
-        manager = get_arm64dbi_manager()
-        
-        # 默认输出文件名
-        if not output_file:
-            package_name = getattr(session, 'app_name', 'unknown')
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            output_file = os.path.expanduser(f"~/Desktop/arm64dbi_trace_{package_name}_{timestamp}.log")
-        else:
-            output_file = os.path.expanduser(output_file)
-        
-        log_info("📥 拉取 ARM64DBI 追踪日志")
-        log_info(f"   📁 保存到: {output_file}")
-        
-        # 拉取日志
-        from .arm64dbi import DEFAULT_TRACE_OUTPUT, DEFAULT_FAST_LOG_OUTPUT
-        
-        if manager.pull_trace_log(output_file, DEFAULT_TRACE_OUTPUT):
-            # 显示统计
-            if os.path.exists(output_file):
-                size = os.path.getsize(output_file)
-                with open(output_file, 'rb') as f:
-                    lines = sum(1 for _ in f)
-                
-                log_info(f"📊 追踪统计:")
-                log_info(f"   文件大小: {size // 1024}KB")
-                log_info(f"   总行数: {lines}")
-                
-                # 显示前几行预览
-                if lines > 0:
-                    log_info(f"")
-                    log_info(f"📝 日志预览 (前10行):")
-                    with open(output_file, 'r', errors='ignore') as f:
-                        for i, line in enumerate(f):
-                            if i >= 10:
-                                log_info("   ...")
-                                break
-                            log_info(f"   {line.rstrip()}")
-        else:
-            log_warning("⚠️ 追踪日志为空或不存在")
-            log_info("   请先运行 arm64dbi 命令开始追踪")
-            log_info("   然后触发目标函数")
-        
-        # 尝试拉取高性能日志
-        fast_log_output = output_file.replace('.log', '_fast.log')
-        code, stdout, _ = manager._run_adb_shell(f'ls -la {DEFAULT_FAST_LOG_OUTPUT}')
-        if code == 0 and 'arm64dbi_fast.log' in stdout:
-            log_info("")
-            log_info("📥 发现高性能日志，一并拉取...")
-            manager.pull_trace_log(fast_log_output, DEFAULT_FAST_LOG_OUTPUT)
-            log_info(f"   📁 高性能日志: {fast_log_output}")
-        
-    except Exception as e:
-        log_error(f"❌ 拉取日志失败: {e}")
+# ===== ARM64DBI 命令处理函数 (功能暂时隐藏 - 项目仅供学习使用) =====
+# 以下函数已注释，如需恢复请取消注释并恢复对应的 import 语句
+# def _handle_arm64dbi_command(session, parts): ...
+# def _handle_arm64dbi_symbol_command(session, parts): ...
+# def _handle_arm64dbi_status_command(session): ...
+# def _handle_arm64dbi_pull_command(session, output_file): ...
 
 
 def _handle_custom_function_command(session, cmd, parts):
