@@ -428,12 +428,15 @@ function help() {
     
     LOG("\\n🔬 汇编追踪命令 (SO级别):", { c: Color.Red });
     LOG("  🔬 Small-Trace (QBDI 汇编追踪):", { c: Color.Blue });
-    LOG("    smalltrace <so_name> <offset> [output_file] [args_count] [hexdump] - SO汇编追踪", { c: Color.White });
+    LOG("    smalltrace <so_name> <offset> [output_file] [args_count] [hexdump] [jni] [syscall]", { c: Color.White });
     LOG("      示例: smalltrace libjnicalculator.so 0x21244", { c: Color.Yellow });
-    LOG("      示例: smalltrace libjnicalculator.so 0x21244 ~/Desktop/trace.log 5 true", { c: Color.Yellow });
-    LOG("    smalltrace_symbol <so_name> <symbol> [output_file] [args_count] [hexdump] - 符号追踪", { c: Color.White });
+    LOG("      示例: smalltrace libjnicalculator.so 0x21244 ~/trace.log 5 false true  # JNI追踪", { c: Color.Yellow });
+    LOG("      示例: smalltrace libjnicalculator.so 0x21244 ~/trace.log 5 false true true  # JNI+Syscall", { c: Color.Yellow });
+    LOG("    smalltrace_symbol <so_name> <symbol> [output_file] [args_count] [hexdump] [jni] [syscall]", { c: Color.White });
     LOG("      示例: smalltrace_symbol libjnicalculator.so encryptToMd5Hex", { c: Color.Yellow });
     LOG("    smalltrace_pull [output_file] - 拉取追踪日志", { c: Color.White });
+    LOG("    📱 JNI追踪: 自动检测 FindClass, GetMethodID, RegisterNatives 等", { c: Color.Cyan });
+    LOG("    🔧 Syscall追踪: 自动检测 openat, read, write, mmap 等", { c: Color.Cyan });
     LOG("    smalltrace_analyze <trace_file> - 分析追踪日志", { c: Color.White });
     LOG("    smalltrace_status - 查看 Small-Trace 状态", { c: Color.White });
     LOG("  🚀 ARM64DBI (增强版追踪，支持 JNI/Syscall):", { c: Color.Blue });

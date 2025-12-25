@@ -1607,13 +1607,19 @@ def _handle_task_commands(session, user_input):
     
     # ===== Small-Trace (QBDI 汇编追踪) 命令 =====
     elif cmd == 'smalltrace':
-        # smalltrace <so_name> <offset> [output_file] [args_count] [hexdump]
+        # smalltrace <so_name> <offset> [output_file] [args_count] [hexdump] [jni_trace] [syscall_trace]
         if len(parts) < 3:
-            log_error("❌ 用法: smalltrace <so_name> <offset> [output_file] [args_count] [hexdump]")
+            log_error("❌ 用法: smalltrace <so_name> <offset> [output_file] [args_count] [hexdump] [jni] [syscall]")
             log_info("   示例: smalltrace libjnicalculator.so 0x21244")
             log_info("   示例: smalltrace libjnicalculator.so 0x21244 ~/Desktop/trace.log 5")
             log_info("   示例: smalltrace libjnicalculator.so 0x21244 ~/Desktop/trace.log 5 true  # 开启hexdump")
-            log_info("   hexdump 参数: true/1/on 开启, 默认关闭")
+            log_info("   示例: smalltrace libjnicalculator.so 0x21244 ~/trace.log 5 false true  # 开启JNI追踪")
+            log_info("   示例: smalltrace libjnicalculator.so 0x21244 ~/trace.log 5 false true true  # JNI+Syscall")
+            log_info("")
+            log_info("   参数说明:")
+            log_info("   hexdump  - 显示内存 hexdump (true/1/on 开启, 默认关闭)")
+            log_info("   jni      - JNI 追踪: 自动检测 FindClass, GetMethodID 等 (默认关闭)")
+            log_info("   syscall  - Syscall 追踪: 自动检测 openat, read, mmap 等 (默认关闭)")
             return True
         
         _handle_smalltrace_command(session, parts)
@@ -1928,15 +1934,27 @@ def _handle_smalltrace_command(session, parts):
         package_name = getattr(session, 'app_name', None)
         output_file = os.path.expanduser(parts[3]) if len(parts) > 3 else _generate_trace_output_path(package_name)
         args_count = int(parts[4]) if len(parts) > 4 else 5
-        # 新增: hexdump 参数 (第6个参数, 默认关闭)
+        # hexdump 参数 (第6个参数, 默认关闭)
         show_hexdump = False
+        # JNI 追踪参数 (第7个参数, 默认关闭)
+        jni_trace = False
+        # Syscall 追踪参数 (第8个参数, 默认关闭)
+        syscall_trace = False
         if len(parts) > 5:
             hexdump_arg = parts[5].lower()
             show_hexdump = hexdump_arg in ('1', 'true', 'yes', 'on', 'hexdump')
+        if len(parts) > 6:
+            jni_arg = parts[6].lower()
+            jni_trace = jni_arg in ('1', 'true', 'yes', 'on', 'jni')
+        if len(parts) > 7:
+            syscall_arg = parts[7].lower()
+            syscall_trace = syscall_arg in ('1', 'true', 'yes', 'on', 'syscall', 'svc')
         
         log_info("🔬 Small-Trace SO 汇编追踪")
         log_info(f"   目标: {so_name} @ 0x{offset:x}")
         log_info(f"   Hexdump: {'开启' if show_hexdump else '关闭'}")
+        log_info(f"   JNI 追踪: {'开启' if jni_trace else '关闭'}")
+        log_info(f"   Syscall 追踪: {'开启' if syscall_trace else '关闭'}")
         
         # 获取 SmallTrace 管理器
         manager = get_smalltrace_manager()
@@ -1956,7 +1974,9 @@ def _handle_smalltrace_command(session, parts):
             trace_mode=1,  # 偏移追踪
             args_count=args_count,
             output_file=output_file,
-            show_hexdump=show_hexdump
+            show_hexdump=show_hexdump,
+            jni_trace=jni_trace,
+            syscall_trace=syscall_trace
         )
         
         script_content = manager.generate_trace_script(config)
@@ -1972,6 +1992,10 @@ def _handle_smalltrace_command(session, parts):
         log_success("✅ Small-Trace 已启动")
         log_info(f"   📦 目标应用: {session._smalltrace_package}")
         log_info(f"   📁 输出文件: {output_file}")
+        if jni_trace:
+            log_info("   📱 JNI 追踪: 自动检测 FindClass, GetMethodID, RegisterNatives 等")
+        if syscall_trace:
+            log_info("   🔧 Syscall 追踪: 自动检测 openat, read, write, mmap 等")
         log_info("   触发目标函数后，使用 'smalltrace_pull' 拉取追踪日志")
         
     except Exception as e:

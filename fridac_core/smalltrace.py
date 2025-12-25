@@ -75,6 +75,8 @@ class SmallTraceConfig:
     output_file: str = ""           # 本地输出文件路径
     package_name: str = ""          # 应用包名 (用于定位追踪日志)
     show_hexdump: bool = False      # 是否显示 hexdump 内容 (默认关闭)
+    jni_trace: bool = False         # 是否启用 JNI 追踪 (默认关闭)
+    syscall_trace: bool = False     # 是否启用 Syscall 追踪 (默认关闭)
 
 
 class SmallTraceManager:
@@ -268,9 +270,10 @@ class SmallTraceManager:
         Returns:
             JavaScript 脚本内容
         """
-        # 转换 show_hexdump 为 JS 整数
+        # 转换参数为 JS 整数
         hexdump_flag = 1 if config.show_hexdump else 0
-        hexdump_text = "开启" if config.show_hexdump else "关闭"
+        jni_trace_flag = 1 if config.jni_trace else 0
+        syscall_trace_flag = 1 if config.syscall_trace else 0
         
         script = f'''// Small-Trace 追踪脚本 (由 fridac 生成)
 // 目标: {config.so_name} @ 0x{config.offset:x} ({config.symbol or 'offset'})
@@ -283,10 +286,19 @@ class SmallTraceManager:
     const Trace_Mode = {config.trace_mode};  // 0=符号, 1=偏移
     const args = {config.args_count};
     const show_hexdump = {hexdump_flag};  // hexdump 显示开关
+    const jni_trace = {jni_trace_flag};    // JNI 追踪开关
+    const syscall_trace = {syscall_trace_flag};  // Syscall 追踪开关
     
     let Calvin_Trace_symbol_ex = null;
     let Calvin_Trace_offset_ex = null;
+    let Calvin_Trace_offset_full = null;
     let gqb_set_hexdump_enabled = null;
+    let gqb_enable_jni_trace = null;
+    let gqb_disable_jni_trace = null;
+    let gqb_enable_syscall_trace = null;
+    let gqb_disable_syscall_trace = null;
+    let gqb_print_jni_stats = null;
+    let gqb_print_syscall_stats = null;
     let isTraceSoLoaded = false;
     
     console.log("═══════════════════════════════════════════════════════════════");
@@ -301,9 +313,38 @@ class SmallTraceManager:
     }}
     console.log("[*] 参数数量: " + args);
     console.log("[*] Hexdump: " + (show_hexdump ? "开启" : "关闭"));
+    console.log("[*] JNI 追踪: " + (jni_trace ? "开启" : "关闭"));
+    console.log("[*] Syscall 追踪: " + (syscall_trace ? "开启" : "关闭"));
     console.log("");
     
+    function setupJniSyscallTrace() {{
+        // 设置 JNI 追踪
+        if (jni_trace && gqb_enable_jni_trace) {{
+            try {{
+                const enableJni = new NativeFunction(gqb_enable_jni_trace, 'void', []);
+                enableJni();
+                console.log("[+] JNI 追踪已启用");
+            }} catch (e) {{
+                console.log("[-] JNI 追踪启用失败: " + e);
+            }}
+        }}
+        
+        // 设置 Syscall 追踪
+        if (syscall_trace && gqb_enable_syscall_trace) {{
+            try {{
+                const enableSyscall = new NativeFunction(gqb_enable_syscall_trace, 'void', []);
+                enableSyscall();
+                console.log("[+] Syscall 追踪已启用");
+            }} catch (e) {{
+                console.log("[-] Syscall 追踪启用失败: " + e);
+            }}
+        }}
+    }}
+    
     function traceSymbolOrOffset(soName, symbolName, addr, mode) {{
+        // 先设置 JNI/Syscall 追踪
+        setupJniSyscallTrace();
+        
         if (mode === 0) {{
             console.log("[*] 开始符号追踪: " + soName + " -> " + symbolName);
             if (Calvin_Trace_symbol_ex !== null) {{
@@ -320,25 +361,51 @@ class SmallTraceManager:
             }}
         }} else if (mode === 1) {{
             console.log("[*] 开始偏移量追踪: " + soName + " @ 0x" + addr.toString(16));
-            if (Calvin_Trace_offset_ex !== null) {{
-                // 使用带 hexdump 参数的新函数
-                const offsetFunc = new NativeFunction(Calvin_Trace_offset_ex, 'int', ['pointer', 'long', 'int', 'int']);
+            
+            // 优先使用带完整控制的新函数 Calvin_Trace_offset_full
+            if (Calvin_Trace_offset_full !== null) {{
+                const fullFunc = new NativeFunction(Calvin_Trace_offset_full, 'int', ['pointer', 'long', 'int', 'int', 'int', 'int']);
                 try {{
                     const agr1 = Memory.allocUtf8String(SO_name);
-                    const result = offsetFunc(agr1, addr, args, show_hexdump);
-                    console.log("[+] 偏移量追踪启动，结果: " + result);
-                    
-                    console.log("");
-                    console.log("═══════════════════════════════════════════════════════════════");
-                    console.log("  Small-Trace 已启动！");
-                    console.log("  追踪输出保存在设备: /data/data/<package>/qbdi_trace_<package>.log");
-                    console.log("  查看命令: adb logcat | grep -iE 'SmallTrace|GQB|QBDI'");
-                    console.log("═══════════════════════════════════════════════════════════════");
+                    const result = fullFunc(agr1, addr, args, show_hexdump, jni_trace, syscall_trace);
+                    console.log("[+] 偏移量追踪启动 (完整模式)，结果: " + result);
+                    printTraceInfo();
                 }} catch (e) {{
-                    console.log("[-] 偏移量追踪失败: " + e);
+                    console.log("[-] 完整追踪失败，尝试兼容模式: " + e);
+                    fallbackTrace(addr);
                 }}
+            }} else if (Calvin_Trace_offset_ex !== null) {{
+                fallbackTrace(addr);
             }}
         }}
+    }}
+    
+    function fallbackTrace(addr) {{
+        // 兼容旧版本 libqdbi.so
+        const offsetFunc = new NativeFunction(Calvin_Trace_offset_ex, 'int', ['pointer', 'long', 'int', 'int']);
+        try {{
+            const agr1 = Memory.allocUtf8String(SO_name);
+            const result = offsetFunc(agr1, addr, args, show_hexdump);
+            console.log("[+] 偏移量追踪启动 (兼容模式)，结果: " + result);
+            printTraceInfo();
+        }} catch (e) {{
+            console.log("[-] 偏移量追踪失败: " + e);
+        }}
+    }}
+    
+    function printTraceInfo() {{
+        console.log("");
+        console.log("═══════════════════════════════════════════════════════════════");
+        console.log("  Small-Trace 已启动！");
+        console.log("  追踪输出保存在设备: /data/data/<package>/qbdi_trace_<package>.log");
+        if (jni_trace) {{
+            console.log("  📱 JNI 追踪: 自动检测 FindClass, GetMethodID, RegisterNatives 等");
+        }}
+        if (syscall_trace) {{
+            console.log("  🔧 Syscall 追踪: 自动检测 openat, read, write, mmap 等");
+        }}
+        console.log("  查看命令: adb logcat | grep -iE 'SmallTrace|GQB|QBDI|JNI|SVC'");
+        console.log("═══════════════════════════════════════════════════════════════");
     }}
     
     // 检查目标 SO 是否已加载
@@ -352,14 +419,25 @@ class SmallTraceManager:
             console.log("[+] 追踪库加载成功");
             isTraceSoLoaded = true;
             
-            // 获取带 hexdump 参数的新函数
+            // 获取追踪函数
             Calvin_Trace_symbol_ex = Module.findExportByName(TraceSoPath, 'Calvin_Trace_symbol_ex');
             Calvin_Trace_offset_ex = Module.findExportByName(TraceSoPath, 'Calvin_Trace_offset_ex');
+            Calvin_Trace_offset_full = Module.findExportByName(TraceSoPath, 'Calvin_Trace_offset_full');
             gqb_set_hexdump_enabled = Module.findExportByName(TraceSoPath, 'gqb_set_hexdump_enabled');
+            
+            // 获取 JNI/Syscall 追踪函数
+            gqb_enable_jni_trace = Module.findExportByName(TraceSoPath, 'gqb_enable_jni_trace');
+            gqb_disable_jni_trace = Module.findExportByName(TraceSoPath, 'gqb_disable_jni_trace');
+            gqb_enable_syscall_trace = Module.findExportByName(TraceSoPath, 'gqb_enable_syscall_trace');
+            gqb_disable_syscall_trace = Module.findExportByName(TraceSoPath, 'gqb_disable_syscall_trace');
+            gqb_print_jni_stats = Module.findExportByName(TraceSoPath, 'gqb_print_jni_stats');
+            gqb_print_syscall_stats = Module.findExportByName(TraceSoPath, 'gqb_print_syscall_stats');
             
             console.log("[*] Calvin_Trace_symbol_ex: " + Calvin_Trace_symbol_ex);
             console.log("[*] Calvin_Trace_offset_ex: " + Calvin_Trace_offset_ex);
-            console.log("[*] gqb_set_hexdump_enabled: " + gqb_set_hexdump_enabled);
+            console.log("[*] Calvin_Trace_offset_full: " + Calvin_Trace_offset_full);
+            if (jni_trace) console.log("[*] gqb_enable_jni_trace: " + gqb_enable_jni_trace);
+            if (syscall_trace) console.log("[*] gqb_enable_syscall_trace: " + gqb_enable_syscall_trace);
             
             if ((Trace_Mode === 0 && Calvin_Trace_symbol_ex) || (Trace_Mode === 1 && Calvin_Trace_offset_ex)) {{
                 traceSymbolOrOffset(SO_name, Symbol, so_offset, Trace_Mode);
@@ -397,8 +475,15 @@ class SmallTraceManager:
                             
                             Calvin_Trace_symbol_ex = Module.findExportByName(TraceSoPath, 'Calvin_Trace_symbol_ex');
                             Calvin_Trace_offset_ex = Module.findExportByName(TraceSoPath, 'Calvin_Trace_offset_ex');
+                            Calvin_Trace_offset_full = Module.findExportByName(TraceSoPath, 'Calvin_Trace_offset_full');
                             
-                            if ((Trace_Mode === 0 && Calvin_Trace_symbol_ex) || (Trace_Mode === 1 && Calvin_Trace_offset_ex)) {{
+                            // 获取 JNI/Syscall 追踪函数
+                            gqb_enable_jni_trace = Module.findExportByName(TraceSoPath, 'gqb_enable_jni_trace');
+                            gqb_enable_syscall_trace = Module.findExportByName(TraceSoPath, 'gqb_enable_syscall_trace');
+                            gqb_print_jni_stats = Module.findExportByName(TraceSoPath, 'gqb_print_jni_stats');
+                            gqb_print_syscall_stats = Module.findExportByName(TraceSoPath, 'gqb_print_syscall_stats');
+                            
+                            if ((Trace_Mode === 0 && Calvin_Trace_symbol_ex) || (Trace_Mode === 1 && (Calvin_Trace_offset_full || Calvin_Trace_offset_ex))) {{
                                 traceSymbolOrOffset(traced_so, Symbol, so_offset, Trace_Mode);
                             }}
                         }} catch (e) {{
