@@ -471,33 +471,73 @@ class ARM64DBIManager:
             global.funcs = funcs;
             global.tracedPtr = tracedPtr;
             
-            // 设置 Hook 以便在原函数被调用时使用追踪版本
+            // 替换原函数为追踪版本 (这样才会生成日志)
             const mod = Process.findModuleByName(SO_NAME);
             if (mod) {{
                 const origAddr = mod.base.add(OFFSET);
-                LOG.info("设置 Hook: " + origAddr + " -> " + tracedPtr);
+                LOG.info("替换函数: " + origAddr + " -> " + tracedPtr);
                 
-                // Attach hook 而非 replace，避免崩溃风险
-                Interceptor.attach(origAddr, {{
-                    onEnter: function(args) {{
+                // 使用 replace 模式，调用追踪版本
+                try {{
+                    Interceptor.replace(origAddr, new NativeCallback(function() {{
                         LOG.line();
-                        LOG.ok("函数被调用!");
+                        LOG.ok("函数被调用，执行追踪版本...");
                         LOG.info("参数:");
-                        for (var i = 0; i < Math.min(ARGS_COUNT, 8); i++) {{
-                            LOG.info("  arg" + i + ": " + args[i]);
+                        for (var i = 0; i < Math.min(arguments.length, ARGS_COUNT); i++) {{
+                            LOG.info("  arg" + i + ": " + arguments[i]);
                         }}
-                    }},
-                    onLeave: function(retval) {{
-                        LOG.info("返回值: " + retval);
+                        
+                        // 调用追踪版本 (这会产生日志)
+                        var result;
+                        try {{
+                            result = global.traced(
+                                arguments[0] || 0,
+                                arguments[1] || 0,
+                                arguments[2] || 0,
+                                arguments[3] || 0,
+                                arguments[4] || 0
+                            );
+                        }} catch (e) {{
+                            LOG.err("追踪版本执行出错: " + e);
+                            LOG.err("回退到原函数...");
+                            // 如果追踪版本崩溃，恢复原函数
+                            Interceptor.revert(origAddr);
+                            return 0;
+                        }}
+                        
+                        LOG.info("返回值: " + result);
                         LOG.line();
                         
                         // 打印统计
                         if (funcs.print_stats) {{
                             funcs.print_stats();
                         }}
-                    }}
-                }});
-                LOG.ok("Hook 已设置，等待函数调用...");
+                        
+                        return result;
+                    }}, 'uint64', ['uint64', 'uint64', 'uint64', 'uint64', 'uint64']));
+                    
+                    LOG.ok("函数已替换为追踪版本，等待调用...");
+                    LOG.info("⚠️ 注意: 复杂函数可能导致崩溃，如遇问题请重启应用");
+                }} catch (e) {{
+                    LOG.err("替换失败: " + e);
+                    LOG.info("回退到 attach 模式 (仅观察，不产生日志)");
+                    
+                    // 回退到 attach 模式
+                    Interceptor.attach(origAddr, {{
+                        onEnter: function(args) {{
+                            LOG.line();
+                            LOG.ok("函数被调用 (attach 模式，无追踪日志)");
+                            LOG.info("参数:");
+                            for (var i = 0; i < Math.min(ARGS_COUNT, 8); i++) {{
+                                LOG.info("  arg" + i + ": " + args[i]);
+                            }}
+                        }},
+                        onLeave: function(retval) {{
+                            LOG.info("返回值: " + retval);
+                            LOG.line();
+                        }}
+                    }});
+                }}
             }}
         }} else {{
             LOG.err("追踪失败: 返回值为空");
