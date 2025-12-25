@@ -442,6 +442,7 @@ function help() {
     LOG("      示例: arm64dbi libnative.so 0x1234 jni=true syscall=true", { c: Color.Yellow });
     LOG("    arm64dbi_symbol <so_name> <symbol> [jni=true] [syscall=true] - 符号追踪", { c: Color.White });
     LOG("      示例: arm64dbi_symbol libnative.so encrypt jni=true", { c: Color.Yellow });
+    LOG("    arm64dbi_pull [output_file] - 拉取追踪日志到本地", { c: Color.White });
     LOG("    arm64dbi_status - 查看 ARM64DBI 状态", { c: Color.White });
     LOG("  💡 ARM64DBI 相比 Small-Trace 的优势:", { c: Color.Gray });
     LOG("    • JNI 追踪: 自动解析 FindClass/GetMethodID/RegisterNatives 参数", { c: Color.Gray });

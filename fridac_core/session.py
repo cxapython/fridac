@@ -1702,6 +1702,12 @@ def _handle_task_commands(session, user_input):
             log_error("❌ 推送失败")
         return True
     
+    elif cmd == 'arm64dbi_pull':
+        # arm64dbi_pull [output_file]
+        output_file = parts[1] if len(parts) > 1 else None
+        _handle_arm64dbi_pull_command(session, output_file)
+        return True
+    
     # 检查是否是自定义函数命令
     elif _handle_custom_function_command(session, cmd, parts):
         return True
@@ -2290,8 +2296,9 @@ def _handle_arm64dbi_command(session, parts):
         session.execute_js(script_content)
         
         log_success("✅ ARM64DBI 追踪已启动")
-        log_info("   触发目标函数后，使用 logcat 查看输出:")
-        log_info("   adb logcat | grep -iE 'DBI|JNI|SVC'")
+        log_info("   触发目标函数后:")
+        log_info("   1. 使用 'arm64dbi_pull' 拉取追踪日志到本地")
+        log_info("   2. 或用 logcat 实时查看: adb logcat | grep -iE 'DBI|JNI|SVC'")
         
     except Exception as e:
         log_error(f"❌ ARM64DBI 启动失败: {e}")
@@ -2356,6 +2363,9 @@ def _handle_arm64dbi_symbol_command(session, parts):
         session.execute_js(script_content)
         
         log_success("✅ ARM64DBI 追踪已启动")
+        log_info("   触发目标函数后:")
+        log_info("   1. 使用 'arm64dbi_pull' 拉取追踪日志到本地")
+        log_info("   2. 或用 logcat 实时查看: adb logcat | grep -iE 'DBI|JNI|SVC'")
         
     except Exception as e:
         log_error(f"❌ ARM64DBI 启动失败: {e}")
@@ -2430,6 +2440,67 @@ def _handle_arm64dbi_status_command(session):
         
     except Exception as e:
         log_error(f"❌ 获取状态失败: {e}")
+
+
+def _handle_arm64dbi_pull_command(session, output_file: str = None):
+    """处理 arm64dbi_pull 拉取日志命令"""
+    import os
+    import time
+    
+    try:
+        manager = get_arm64dbi_manager()
+        
+        # 默认输出文件名
+        if not output_file:
+            package_name = getattr(session, 'app_name', 'unknown')
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            output_file = os.path.expanduser(f"~/Desktop/arm64dbi_trace_{package_name}_{timestamp}.log")
+        else:
+            output_file = os.path.expanduser(output_file)
+        
+        log_info("📥 拉取 ARM64DBI 追踪日志")
+        log_info(f"   📁 保存到: {output_file}")
+        
+        # 拉取日志
+        from .arm64dbi import DEFAULT_TRACE_OUTPUT, DEFAULT_FAST_LOG_OUTPUT
+        
+        if manager.pull_trace_log(output_file, DEFAULT_TRACE_OUTPUT):
+            # 显示统计
+            if os.path.exists(output_file):
+                size = os.path.getsize(output_file)
+                with open(output_file, 'rb') as f:
+                    lines = sum(1 for _ in f)
+                
+                log_info(f"📊 追踪统计:")
+                log_info(f"   文件大小: {size // 1024}KB")
+                log_info(f"   总行数: {lines}")
+                
+                # 显示前几行预览
+                if lines > 0:
+                    log_info(f"")
+                    log_info(f"📝 日志预览 (前10行):")
+                    with open(output_file, 'r', errors='ignore') as f:
+                        for i, line in enumerate(f):
+                            if i >= 10:
+                                log_info("   ...")
+                                break
+                            log_info(f"   {line.rstrip()}")
+        else:
+            log_warning("⚠️ 追踪日志为空或不存在")
+            log_info("   请先运行 arm64dbi 命令开始追踪")
+            log_info("   然后触发目标函数")
+        
+        # 尝试拉取高性能日志
+        fast_log_output = output_file.replace('.log', '_fast.log')
+        code, stdout, _ = manager._run_adb_shell(f'ls -la {DEFAULT_FAST_LOG_OUTPUT}')
+        if code == 0 and 'arm64dbi_fast.log' in stdout:
+            log_info("")
+            log_info("📥 发现高性能日志，一并拉取...")
+            manager.pull_trace_log(fast_log_output, DEFAULT_FAST_LOG_OUTPUT)
+            log_info(f"   📁 高性能日志: {fast_log_output}")
+        
+    except Exception as e:
+        log_error(f"❌ 拉取日志失败: {e}")
 
 
 def _handle_custom_function_command(session, cmd, parts):
