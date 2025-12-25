@@ -238,11 +238,58 @@ fridac/
 
 ## 📖 文档
 
-- [任务系统指南](TASK_SYSTEM_GUIDE.md) - 任务管理命令详解
-- [自定义脚本指南](CUSTOM_SCRIPTS_GUIDE.md) - 创建自定义 Hook 脚本
-- [Native Hook 指南](HOOKNATIVE_USAGE_GUIDE.md) - Native 函数 Hook
-- [早期 Hook 指南](EARLY_HOOKS_GUIDE.md) - Spawn 模式早期 Hook
-- [故障排除](TROUBLESHOOTING.md) - 常见问题解决
+- [Small-Trace 分析指南](SMALLTRACE_ANALYSIS_GUIDE.md) - QBDI 汇编追踪与算法还原实战教程
+
+### 快速参考
+
+<details>
+<summary>📋 任务管理命令</summary>
+
+| 命令 | 说明 |
+|------|------|
+| `tasks` / `jobs` | 显示所有任务 |
+| `kill <id>` | 终止任务 |
+| `killall [type]` | 终止所有/指定类型任务 |
+| `taskinfo <id>` | 任务详情 |
+
+**任务状态**: ⏳pending → 🟢running → ✅completed / ❌failed / 🚫cancelled
+</details>
+
+<details>
+<summary>🔧 hooknative 用法</summary>
+
+```bash
+hooknative <function_name> [show_stack] [stack_lines]
+
+# 示例
+hooknative malloc true              # Hook malloc
+hooknative libc.so!open true        # 指定模块
+hooknative SSL_write true 10        # 显示10行栈
+```
+</details>
+
+<details>
+<summary>🚀 早期 Hook (Spawn 模式)</summary>
+
+```bash
+fridac -f com.app --hook traceRegisterNatives       # 单个 Hook
+fridac -f com.app --preset jni_analysis             # 预设套件
+fridac -f com.app --preset crypto_analysis -o log   # 输出到文件
+
+# 可用预设: jni_analysis, crypto_analysis, network_analysis, anti_debug
+```
+</details>
+
+<details>
+<summary>❓ 故障排除</summary>
+
+| 问题 | 解决方案 |
+|------|---------|
+| 函数未找到 | 检查 JSDoc 格式，运行 `reload_scripts` |
+| 连接失败 | 检查 `frida-ps -U`，确认服务器运行 |
+| Hook 未执行 | 使用 spawn 模式 `-f` + `--hook` |
+| 输出不正确 | 使用 `LOG()` 而非 `console.log()` |
+</details>
 
 ## 🔧 自定义脚本
 
