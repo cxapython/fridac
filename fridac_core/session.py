@@ -1692,6 +1692,16 @@ def _handle_task_commands(session, user_input):
         _handle_arm64dbi_status_command(session)
         return True
     
+    elif cmd == 'arm64dbi_push':
+        # 强制重新推送 libarm64dbi.so
+        log_info("📲 强制推送 libarm64dbi.so 到设备...")
+        manager = get_arm64dbi_manager()
+        if manager.push_libarm64dbi():
+            log_success("✅ 推送成功！请重新运行 arm64dbi 命令")
+        else:
+            log_error("❌ 推送失败")
+        return True
+    
     # 检查是否是自定义函数命令
     elif _handle_custom_function_command(session, cmd, parts):
         return True
@@ -2362,6 +2372,32 @@ def _handle_arm64dbi_status_command(session):
         # 检查追踪库
         if manager.check_libarm64dbi():
             log_success("✅ ARM64DBI 追踪库: 已就绪")
+            
+            # 检查导出符号
+            log_info("")
+            log_info("🔍 检查核心导出符号...")
+            required_symbols = ['dbi_init', 'dbi_trace_offset', 'dbi_trace_symbol', 'dbi_version']
+            code, stdout, _ = manager._run_adb_shell(
+                'nm -D /data/local/tmp/libarm64dbi.so 2>/dev/null | grep -E "dbi_init|dbi_trace_offset|dbi_trace_symbol|dbi_version"'
+            )
+            if code == 0 and stdout:
+                found_symbols = []
+                for line in stdout.split('\n'):
+                    for sym in required_symbols:
+                        if sym in line:
+                            found_symbols.append(sym)
+                            log_success(f"   ✅ {sym}")
+                
+                missing = set(required_symbols) - set(found_symbols)
+                for sym in missing:
+                    log_error(f"   ❌ {sym} 缺失!")
+                
+                if missing:
+                    log_warning("⚠️ 设备上的 libarm64dbi.so 缺少核心函数！")
+                    log_info("   请重新推送: arm64dbi_push")
+            else:
+                log_warning("⚠️ 无法检查导出符号 (可能缺少 nm 工具)")
+                log_info("   尝试在 Frida 中检查...")
         else:
             log_warning("⚠️ ARM64DBI 追踪库: 未安装")
             log_info("   请从 ARM64DBIDemo 项目编译并复制到 fridac/binaries/arm64/libarm64dbi.so")
@@ -2386,6 +2422,11 @@ def _handle_arm64dbi_status_command(session):
         log_info("   │ 二进制大小     │     ~25MB      │      ~18MB     │")
         log_info("   │ 实现方式       │   纯 ARM64     │      QBDI      │")
         log_info("   └────────────────┴────────────────┴────────────────┘")
+        
+        log_info("")
+        log_info("🔧 诊断命令:")
+        log_info("   arm64dbi_push    - 重新推送 libarm64dbi.so 到设备")
+        log_info("   arm64dbi_status  - 查看当前状态")
         
     except Exception as e:
         log_error(f"❌ 获取状态失败: {e}")

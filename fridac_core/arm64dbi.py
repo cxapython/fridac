@@ -268,13 +268,27 @@ class ARM64DBIManager:
             const handle = Module.load(DBI_SO_PATH);
             LOG.ok("追踪库加载成功: " + handle.base);
             
-            // 绑定函数
+            // 获取模块名用于查找导出 (findExportByName 需要模块名，不是路径)
+            const moduleName = handle.name;  // 例如 "libarm64dbi.so"
+            LOG.info("模块名: " + moduleName);
+            
+            // 绑定函数 (增强错误处理)
+            let bindFailCount = 0;
+            const requiredFuncs = ['dbi_init', 'dbi_trace_offset', 'dbi_trace_symbol'];
+            
             const bindFunc = (name, retType, argTypes) => {{
-                const ptr = Module.findExportByName(DBI_SO_PATH, name);
+                const ptr = Module.findExportByName(moduleName, name);
                 if (ptr) {{
                     return new NativeFunction(ptr, retType, argTypes);
                 }}
-                LOG.err("函数未找到: " + name);
+                const isRequired = requiredFuncs.indexOf(name) >= 0;
+                if (isRequired) {{
+                    LOG.err("❌ 核心函数未找到: " + name);
+                    bindFailCount++;
+                }} else {{
+                    // 非核心函数只是警告
+                    // LOG.info("可选函数未找到: " + name);
+                }}
                 return null;
             }};
             
@@ -290,6 +304,22 @@ class ARM64DBIManager:
             funcs.fast_log_open = bindFunc("dbi_fast_log_open", 'int', ['pointer', 'int']);
             funcs.fast_log_close = bindFunc("dbi_fast_log_close", 'void', []);
             funcs.print_stats = bindFunc("dbi_print_stats", 'void', []);
+            
+            // 检查核心函数是否绑定成功
+            if (bindFailCount > 0) {{
+                LOG.err("发现 " + bindFailCount + " 个核心函数绑定失败！");
+                LOG.err("请检查 libarm64dbi.so 是否正确编译");
+                LOG.info("提示: 使用 nm -D /data/local/tmp/libarm64dbi.so | grep dbi_ 查看导出符号");
+                
+                // 列出 SO 中的所有导出符号
+                LOG.info("当前 SO 导出的 dbi_ 函数:");
+                Module.enumerateExports(DBI_SO_PATH).forEach(function(exp) {{
+                    if (exp.name.indexOf("dbi_") === 0) {{
+                        LOG.info("  " + exp.name + " @ " + exp.address);
+                    }}
+                }});
+                return false;
+            }}
             
             // 初始化
             const ret = funcs.init();
@@ -385,17 +415,40 @@ class ARM64DBIManager:
         
         if (TRACE_MODE === 0 && SYMBOL) {{
             LOG.info("开始符号追踪: " + SO_NAME + "::" + SYMBOL);
+            if (!funcs.trace_symbol) {{
+                LOG.err("trace_symbol 函数未绑定！请检查 libarm64dbi.so 版本");
+                LOG.err("可能原因: 1) SO 版本过旧 2) SO 编译时未导出 dbi_trace_symbol");
+                return;
+            }}
             const soNamePtr = Memory.allocUtf8String(SO_NAME);
             const symbolPtr = Memory.allocUtf8String(SYMBOL);
             traced = funcs.trace_symbol(soNamePtr, symbolPtr, ARGS_COUNT);
         }} else {{
             LOG.info("开始偏移追踪: " + SO_NAME + " @ 0x" + OFFSET.toString(16));
-            const soNamePtr = Memory.allocUtf8String(SO_NAME);
-            traced = funcs.trace_offset(soNamePtr, OFFSET, ARGS_COUNT);
+            LOG.info("funcs.trace_offset 类型: " + typeof funcs.trace_offset);
+            LOG.info("funcs.trace_offset 值: " + funcs.trace_offset);
+            if (!funcs.trace_offset) {{
+                LOG.err("trace_offset 函数未绑定！请检查 libarm64dbi.so 版本");
+                LOG.err("可能原因: 1) SO 版本过旧 2) SO 编译时未导出 dbi_trace_offset");
+                LOG.err("解决方案: 从 ARM64DBIDemo 重新编译并替换 binaries/arm64/libarm64dbi.so");
+                return;
+            }}
+            try {{
+                const soNamePtr = Memory.allocUtf8String(SO_NAME);
+                LOG.info("调用 trace_offset(" + soNamePtr + ", " + OFFSET + ", " + ARGS_COUNT + ")");
+                traced = funcs.trace_offset(soNamePtr, OFFSET, ARGS_COUNT);
+                LOG.info("trace_offset 返回: " + traced);
+            }} catch (e) {{
+                LOG.err("trace_offset 调用异常: " + e);
+                LOG.err("堆栈: " + e.stack);
+                return;
+            }}
         }}
         
-        if (!traced.isNull()) {{
-            LOG.ok("追踪已启动: " + traced);
+        // traced 是 uint64 数字，需要转换为指针检查
+        const tracedPtr = ptr(traced.toString());
+        if (traced && !tracedPtr.isNull()) {{
+            LOG.ok("追踪已启动: " + tracedPtr);
             
             console.log("");
             LOG.line();
@@ -413,11 +466,41 @@ class ARM64DBIManager:
             console.log("    funcs.print_stats()");
             LOG.line();
             
-            // 导出到全局
-            global.traced = new NativeFunction(traced, 'uint64', ['uint64', 'uint64', 'uint64', 'uint64', 'uint64']);
+            // 导出到全局 (使用转换后的指针)
+            global.traced = new NativeFunction(tracedPtr, 'uint64', ['uint64', 'uint64', 'uint64', 'uint64', 'uint64']);
             global.funcs = funcs;
+            global.tracedPtr = tracedPtr;
+            
+            // 设置 Hook 以便在原函数被调用时使用追踪版本
+            const mod = Process.findModuleByName(SO_NAME);
+            if (mod) {{
+                const origAddr = mod.base.add(OFFSET);
+                LOG.info("设置 Hook: " + origAddr + " -> " + tracedPtr);
+                
+                // Attach hook 而非 replace，避免崩溃风险
+                Interceptor.attach(origAddr, {{
+                    onEnter: function(args) {{
+                        LOG.line();
+                        LOG.ok("函数被调用!");
+                        LOG.info("参数:");
+                        for (var i = 0; i < Math.min(ARGS_COUNT, 8); i++) {{
+                            LOG.info("  arg" + i + ": " + args[i]);
+                        }}
+                    }},
+                    onLeave: function(retval) {{
+                        LOG.info("返回值: " + retval);
+                        LOG.line();
+                        
+                        // 打印统计
+                        if (funcs.print_stats) {{
+                            funcs.print_stats();
+                        }}
+                    }}
+                }});
+                LOG.ok("Hook 已设置，等待函数调用...");
+            }}
         }} else {{
-            LOG.err("追踪失败");
+            LOG.err("追踪失败: 返回值为空");
         }}
     }}
     

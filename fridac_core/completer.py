@@ -134,6 +134,12 @@ class FridacCompleter:
             'smalltrace_analyze': ('📊 分析追踪日志', "smalltrace_analyze ~/Desktop/trace.log"),
             'smalltrace_status': ('📊 Small-Trace 状态', "smalltrace_status"),
             
+            # ===== ARM64DBI (增强版追踪，支持 JNI/Syscall) =====
+            'arm64dbi': ('🚀 ARM64DBI SO汇编追踪(增强版)', "arm64dbi libnative.so 0x1234"),
+            'arm64dbi_symbol': ('🚀 ARM64DBI 符号追踪(增强版)', "arm64dbi_symbol libnative.so encrypt jni=true"),
+            'arm64dbi_status': ('📊 ARM64DBI 状态', "arm64dbi_status"),
+            'arm64dbi_push': ('📲 强制推送 libarm64dbi.so', "arm64dbi_push"),
+            
             # ===== Frida Stalker (指令级追踪) =====
             'stalker_trace': ('🔍 Stalker 汇编追踪', "stalker_trace libtarget.so 0x1234 output.log"),
             
