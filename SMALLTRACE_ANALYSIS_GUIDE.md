@@ -11,6 +11,7 @@
 - [5. 算法还原实战](#5-算法还原实战)
 - [6. 验证还原结果](#6-验证还原结果)
 - [7. 常用分析技巧](#7-常用分析技巧)
+- [8. 高级功能](#8-高级功能)
 
 ---
 
@@ -24,6 +25,8 @@ Small-Trace 是基于 [QBDI (QuarkslaB Dynamic binary Instrumentation)](https://
 - 记录**内存读写**操作（地址、大小、值）
 - 输出**寄存器变化**
 - 生成完整的执行流日志
+- **JNI 追踪**: 自动检测 `FindClass`, `GetMethodID`, `RegisterNatives` 等调用
+- **Syscall 追踪**: 自动检测 `openat`, `read`, `write`, `mmap` 等系统调用
 
 ### 1.2 适用场景
 
@@ -33,6 +36,8 @@ Small-Trace 是基于 [QBDI (QuarkslaB Dynamic binary Instrumentation)](https://
 | 漏洞分析 | 追踪崩溃点附近的执行流 |
 | 协议分析 | 分析数据包加解密过程 |
 | 混淆对抗 | 绕过代码混淆，直接观察运行时行为 |
+| JNI 分析 | 追踪 Native 层与 Java 层交互 |
+| 系统调用分析 | 监控文件、网络、内存等系统调用 |
 
 ### 1.3 本次分析目标
 
@@ -109,13 +114,36 @@ mod.enumerateExports().forEach(function(exp) {
 
 ## 3. 执行追踪
 
-### 3.1 启动追踪
+### 3.1 命令格式
+
+```bash
+# 偏移量追踪 (推荐)
+smalltrace <so_name> <offset> [output_file] [args_count] [hexdump] [jni] [syscall] [level]
+
+# 符号追踪
+smalltrace_symbol <so_name> <symbol> [output_file] [args_count] [hexdump]
+```
+
+**参数说明：**
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `so_name` | 目标 SO 名称 | 必填 |
+| `offset` | 函数偏移地址 (如 0x21244) | 必填 |
+| `output_file` | 本地输出文件路径 | `~/Desktop/qbdi_trace_<pkg>_<时间戳>.log` |
+| `args_count` | 函数参数数量 | 5 |
+| `hexdump` | 显示内存 hexdump (`true`/`false`) | `false` |
+| `jni` | JNI 追踪开关 (`true`/`false`) | `false` |
+| `syscall` | Syscall 追踪开关 (`true`/`false`) | `false` |
+| `level` | 日志级别 (1=简洁, 2=详细) | 1 |
+
+### 3.2 基本追踪
 
 ```bash
 # 连接目标应用
 fridac -p com.example.jnicalculator
 
-# 执行 smalltrace 命令
+# 执行 smalltrace 命令 (基本用法)
 fridac> smalltrace libjnicalculator.so 0x21244
 ```
 
@@ -123,6 +151,9 @@ fridac> smalltrace libjnicalculator.so 0x21244
 ```
 🔬 Small-Trace SO 汇编追踪
    目标: libjnicalculator.so @ 0x21244
+   Hexdump: 关闭
+   JNI 追踪: 关闭 (级别: 简洁)
+   Syscall 追踪: 关闭 (级别: 简洁)
 🔍 检查 Small-Trace 追踪库...
 ✅ Small-Trace 追踪库已就绪 (18MB)
 🔓 关闭 SELinux...
@@ -130,35 +161,97 @@ fridac> smalltrace libjnicalculator.so 0x21244
 📜 注入追踪脚本...
 ✅ Small-Trace 已启动
    📦 目标应用: com.example.jnicalculator
-   📁 输出文件: ~/Desktop/qbdi_trace_com_example_jnicalculator_20251224_142550.log
+   📁 输出文件: ~/Desktop/qbdi_trace_com_example_jnicalculator_20251226_142550.log
    触发目标函数后，使用 'smalltrace_pull' 拉取追踪日志
 ```
 
-### 3.2 触发目标函数
+### 3.3 开启 Hexdump
+
+```bash
+# 开启 hexdump 显示内存块内容
+fridac> smalltrace libjnicalculator.so 0x21244 ~/Desktop/trace.log 5 true
+```
+
+### 3.4 开启 JNI 追踪
+
+```bash
+# 追踪 JNI 调用 (FindClass, GetMethodID, RegisterNatives 等)
+fridac> smalltrace libjnicalculator.so 0x21244 ~/trace.log 5 false true
+
+# JNI + Syscall 一起追踪
+fridac> smalltrace libjnicalculator.so 0x21244 ~/trace.log 5 false true true
+```
+
+### 3.5 日志级别控制
+
+```bash
+# 简洁模式 (level=1): 每个 JNI/Syscall 一行输出
+fridac> smalltrace libjnicalculator.so 0x21244 ~/trace.log 5 false true true 1
+
+# 详细模式 (level=2): 完整展开参数、签名解析、数据预览
+fridac> smalltrace libjnicalculator.so 0x21244 ~/trace.log 5 false true true 2
+```
+
+**日志级别示例：**
+
+```
+# 级别 1 (简洁):
+[JNI] 🏷️ FindClass "com/example/Crypto"
+[SVC] 📂 openat("/data/data/com.example/files/config.json") = 42
+
+# 级别 2 (详细):
+[JNI] 🏷️ FindClass
+      Class: com/example/Crypto
+      Result: 0x7f8a1234
+      Thread: main
+[SVC] 📂 openat
+      Path: /data/data/com.example/files/config.json
+      Flags: O_RDONLY
+      Mode: 0644
+      Result: fd=42
+```
+
+### 3.6 符号追踪
+
+```bash
+# 通过符号名追踪 (需要导出符号)
+fridac> smalltrace_symbol libjnicalculator.so encryptToMd5Hex
+
+# 带 hexdump
+fridac> smalltrace_symbol libjnicalculator.so myFunc ~/trace.log 5 true
+```
+
+### 3.7 触发目标函数
 
 在 APP 中执行加密操作（例如输入 "HelloWorld"，密钥 "1234qwer"）。
 
-### 3.3 拉取追踪日志
+### 3.8 查看追踪状态
+
+```bash
+fridac> smalltrace_status
+```
+
+### 3.9 拉取追踪日志
 
 ```bash
 fridac> smalltrace_pull
 📥 拉取追踪日志
    📦 应用: com.example.jnicalculator
-   📁 保存到: ~/Desktop/qbdi_trace_com_example_jnicalculator_20251224_142550.log
+   📁 保存到: ~/Desktop/qbdi_trace_com_example_jnicalculator_20251226_142550.log
 ✅ 追踪日志已保存
    文件大小: 15MB, 行数: 384,970
 ```
 
-### 3.4 分析追踪日志
+### 3.10 分析追踪日志
 
 ```bash
-fridac> smalltrace_analyze ~/Desktop/qbdi_trace_com_example_jnicalculator_20251224_142550.log
+fridac> smalltrace_analyze ~/Desktop/qbdi_trace_com_example_jnicalculator_20251226_142550.log
 ```
 
 输出摘要：
 ```
 ╔════════════════════════════════════════════════════════════╗
-║               QBDI Trace 分析报告                           ║
+║           QBDI Trace 分析报告 (v2.0)                        ║
 ╚════════════════════════════════════════════════════════════╝
 
 📋 基本信息:
@@ -174,6 +267,15 @@ fridac> smalltrace_analyze ~/Desktop/qbdi_trace_com_example_jnicalculator_202512
    内存写: 9,465
    函数调用: 170
 
+🏷️  操作类型分布 (v2.0):
+   [A] 算术: 15,200 (25.4%)
+   [L] 逻辑: 8,930 (14.9%)
+   [M] 内存: 21,500 (35.9%)
+   [B] 分支: 10,300 (17.2%)
+   [C] 调用: 2,500 (4.2%)
+   [R] 返回: 1,500 (2.5%)
+   最大调用深度: 5
+
 📈 指令类型 Top 10:
     1. ldr        11,735 ( 19.6%) ███░░░░░░░░░░░░░░░░░
     2. ldur        9,300 ( 15.5%) ███░░░░░░░░░░░░░░░░░
@@ -185,7 +287,9 @@ fridac> smalltrace_analyze ~/Desktop/qbdi_trace_com_example_jnicalculator_202512
 
 ## 4. Trace 文件格式解析
 
-### 4.1 文件结构概览
+Small-Trace 支持两种 trace 格式：**v1.0** 和 **v2.0**。
+
+### 4.1 v1.0 格式 (传统格式)
 
 ```
 [hook] target=0x... argc=...          ← 头部信息
@@ -197,9 +301,22 @@ memory read/write at 0x...            ← 内存访问
 [gqb] vm.call ok=1, ret=0x...         ← 执行结果
 ```
 
-### 4.2 各部分详解
+### 4.2 v2.0 格式 (新格式)
 
-#### 4.2.1 头部信息
+```
+# QBDI Trace v2.0 ...                 ← 版本标识
+[hook] target=0x... argc=...          ← 头部信息
+====== ENTER 0x... ======             ← 函数入口
+#序号 [D深度] [类型] 0x地址 偏移 汇编 ;多寄存器变化  ← 指令记录
+  MEM_read/write @0x地址 size=大小 val=值          ← 内存访问
+  SRC_REG=X8 val=0x...                             ← 源寄存器
+====== LEAVE 0x... ======             ← 函数出口
+[gqb] vm.call ok=1, ret=0x...         ← 执行结果
+```
+
+### 4.3 各部分详解
+
+#### 4.3.1 头部信息
 
 ```
 [hook] target=0x7dd0462244 argc=5
@@ -210,7 +327,7 @@ memory read/write at 0x...            ← 内存访问
 | `target` | 被追踪函数的绝对地址 |
 | `argc` | 函数参数数量 |
 
-#### 4.2.2 函数入口/出口
+#### 4.3.2 函数入口/出口
 
 ```
 ====== ENTER 0x7dd0462244 (global) ======
@@ -220,8 +337,9 @@ memory read/write at 0x...            ← 内存访问
 
 标记函数调用的开始和结束，嵌套调用会有多层 ENTER/LEAVE。
 
-#### 4.2.3 指令记录
+#### 4.3.3 指令记录
 
+**v1.0 格式：**
 ```
 0x0000007dd04605e0    0x1f5e0    sub    sp, sp, #16    ;X8=0x140 -> 0x4b
 │                     │          │                     │
@@ -231,23 +349,53 @@ memory read/write at 0x...            ← 内存访问
 └─ 绝对地址
 ```
 
-**偏移的重要性**：`0x1f5e0` 对应 `transformChar` 函数入口，可以用来识别函数调用。
+**v2.0 格式：**
+```
+#12345 [D1] [A] 0x7dd0462244    0x21244    add x8, x9, x10    ;X8=0x0->0x100,X9=0x50
+│      │   │   │               │          │                   │
+│      │   │   │               │          │                   └─ 多寄存器变化
+│      │   │   │               │          └─ 汇编指令
+│      │   │   │               └─ 模块内偏移
+│      │   │   └─ 绝对地址
+│      │   └─ 操作类型 (A=算术, L=逻辑, M=内存, B=分支, C=调用, R=返回)
+│      └─ 调用深度
+└─ 指令序号
+```
 
-#### 4.2.4 内存访问
+**操作类型说明：**
 
+| 类型 | 说明 | 示例指令 |
+|------|------|----------|
+| `A` | 算术运算 | `add`, `sub`, `mul`, `sdiv` |
+| `L` | 逻辑运算 | `and`, `orr`, `eor`, `lsl`, `asr` |
+| `M` | 内存访问 | `ldr`, `str`, `ldp`, `stp` |
+| `B` | 分支跳转 | `b`, `b.eq`, `cbz`, `cbnz` |
+| `C` | 函数调用 | `bl`, `blr` |
+| `R` | 函数返回 | `ret` |
+
+#### 4.3.4 内存访问
+
+**v1.0 格式：**
 ```
 memory write at 0xb400007d6890ce9f, instruction address = 0x7dd04605e4, data size = 1, data value = 48
+```
+
+**v2.0 格式：**
+```
+  MEM_write @0x7ffc1fc0 size=8 val=ff01000000000000
+  SRC_REG=X8 val=0x7ffc1fc0
 ```
 
 | 字段 | 说明 |
 |------|------|
 | `write/read` | 内存操作类型 |
-| `at 0x...` | 访问的内存地址 |
-| `instruction address` | 执行该操作的指令地址 |
-| `data size` | 数据大小（字节） |
-| `data value` | 写入/读取的值 |
+| `@0x...` / `at 0x...` | 访问的内存地址 |
+| `instruction address` | 执行该操作的指令地址 (v1.0) |
+| `size` / `data size` | 数据大小（字节） |
+| `val` / `data value` | 写入/读取的值 |
+| `SRC_REG` | 源寄存器名和值 (v2.0) |
 
-#### 4.2.5 内存 Dump
+#### 4.3.5 内存 Dump (需开启 hexdump)
 
 ```
 *0000007d6890ce90  4B 00 00 00 00 00 00 00 48 00 00 00 00 4B 4B 48 |K       H    KKH|
@@ -257,7 +405,7 @@ memory write at 0xb400007d6890ce9f, instruction address = 0x7dd04605e4, data siz
  └─ 地址（* 标记当前访问位置）
 ```
 
-#### 4.2.6 执行结果
+#### 4.3.6 执行结果
 
 ```
 [gqb] vm.call ok=1, ret=0x1
@@ -470,8 +618,11 @@ grep -c "0x1f5e0.*sub.*sp" trace.log
 ### 7.2 提取内存访问模式
 
 ```bash
-# 查看所有内存写入
+# 查看所有内存写入 (v1.0)
 grep "memory write" trace.log | head -50
+
+# 查看所有内存写入 (v2.0)
+grep "MEM_write" trace.log | head -50
 
 # 查看特定地址的访问
 grep "0x7d6890ce" trace.log
@@ -482,6 +633,9 @@ grep "0x7d6890ce" trace.log
 ```bash
 # 统计 ENTER/LEAVE 对
 grep -E "ENTER|LEAVE" trace.log | head -30
+
+# 分析调用深度 (v2.0)
+grep -oP '\[D\d+\]' trace.log | sort | uniq -c
 ```
 
 ### 7.4 提取算术运算
@@ -506,6 +660,147 @@ fridac> smalltrace_analyze ~/Desktop/trace.log
 # - 指令类型分布
 # - 内存访问热点
 # - 函数调用概览
+# - 操作类型统计 (v2.0)
+# - 最大调用深度 (v2.0)
+```
+
+---
+
+## 8. 高级功能
+
+### 8.1 JNI 追踪
+
+开启 JNI 追踪可以自动检测以下调用：
+
+| 函数 | 说明 |
+|------|------|
+| `FindClass` | 查找 Java 类 |
+| `GetMethodID` | 获取方法 ID |
+| `GetStaticMethodID` | 获取静态方法 ID |
+| `GetFieldID` | 获取字段 ID |
+| `CallObjectMethod` | 调用对象方法 |
+| `CallStaticObjectMethod` | 调用静态方法 |
+| `RegisterNatives` | 注册 Native 方法 |
+| `NewStringUTF` | 创建 Java 字符串 |
+| `GetStringUTFChars` | 获取字符串内容 |
+
+**使用示例：**
+
+```bash
+# 开启 JNI 追踪
+fridac> smalltrace libjnicalculator.so 0x21244 ~/trace.log 5 false true
+
+# 查看 JNI 日志
+adb logcat | grep -iE 'JNI|FindClass|GetMethodID'
+```
+
+**输出示例 (简洁模式)：**
+```
+[JNI] 🏷️ FindClass "com/example/Crypto"
+[JNI] 📌 GetMethodID "encrypt" "(Ljava/lang/String;)Ljava/lang/String;"
+[JNI] 🔗 RegisterNatives "com/example/Native" count=3
+```
+
+### 8.2 Syscall 追踪
+
+开启 Syscall 追踪可以自动检测以下系统调用：
+
+| 系统调用 | 说明 |
+|----------|------|
+| `openat` | 打开文件 |
+| `read` | 读取数据 |
+| `write` | 写入数据 |
+| `close` | 关闭文件 |
+| `mmap` | 内存映射 |
+| `mprotect` | 修改内存保护 |
+| `ioctl` | 设备控制 |
+| `socket` | 创建套接字 |
+| `connect` | 连接网络 |
+| `sendto` / `recvfrom` | 网络数据传输 |
+
+**使用示例：**
+
+```bash
+# 开启 Syscall 追踪
+fridac> smalltrace libjnicalculator.so 0x21244 ~/trace.log 5 false false true
+
+# 同时开启 JNI 和 Syscall
+fridac> smalltrace libjnicalculator.so 0x21244 ~/trace.log 5 false true true
+```
+
+**输出示例 (简洁模式)：**
+```
+[SVC] 📂 openat("/data/data/com.example/files/config.json") = 42
+[SVC] 📖 read(fd=42, size=1024) = 256
+[SVC] 📝 write(fd=1, size=32) = 32
+[SVC] 🗺️ mmap(addr=0x0, size=4096, prot=RW) = 0x7f8a0000
+```
+
+### 8.3 日志级别对比
+
+| 级别 | 说明 | 适用场景 |
+|------|------|----------|
+| `1` (简洁) | 每个调用一行，关键信息 | 快速浏览、大量追踪 |
+| `2` (详细) | 完整展开，包含所有参数 | 深入分析、调试 |
+
+**级别 2 详细输出示例：**
+
+```
+[JNI] 🏷️ FindClass
+      Class: com/example/security/CryptoHelper
+      Result: 0x7f8a1234 (valid)
+      Thread: main (tid=12345)
+      Caller: 0x7dd0462244 (libjnicalculator.so+0x21244)
+
+[SVC] 📂 openat
+      Dirfd: AT_FDCWD
+      Path: /data/data/com.example/files/secret.key
+      Flags: O_RDONLY | O_CLOEXEC
+      Mode: 0644
+      Result: fd=42 (success)
+      Duration: 0.5ms
+```
+
+### 8.4 完整命令参考
+
+```bash
+# 基本追踪
+smalltrace <so_name> <offset>
+
+# 指定输出文件
+smalltrace <so_name> <offset> <output_file>
+
+# 指定参数数量
+smalltrace <so_name> <offset> <output_file> <args_count>
+
+# 开启 hexdump
+smalltrace <so_name> <offset> <output_file> <args_count> true
+
+# 开启 JNI 追踪
+smalltrace <so_name> <offset> <output_file> <args_count> false true
+
+# 开启 JNI + Syscall
+smalltrace <so_name> <offset> <output_file> <args_count> false true true
+
+# 设置日志级别 (1=简洁, 2=详细)
+smalltrace <so_name> <offset> <output_file> <args_count> false true true 2
+
+# 使用占位符跳过参数 (null/none/- 表示使用默认值)
+smalltrace <so_name> <offset> - 5 false true true 1
+
+# 符号追踪
+smalltrace_symbol <so_name> <symbol>
+smalltrace_symbol <so_name> <symbol> <output_file> <args_count> <hexdump>
+
+# 拉取日志
+smalltrace_pull
+smalltrace_pull <output_file>
+
+# 查看状态
+smalltrace_status
+
+# 分析日志
+smalltrace_analyze <trace_file>
 ```
 
 ---
@@ -539,7 +834,18 @@ fridac> smalltrace_analyze ~/Desktop/trace.log
 | `ldrb` | 加载字节 | `ldrb w8, [sp, #15]` |
 | `strb` | 存储字节 | `strb w8, [sp, #15]` |
 
-### C. 参考资料
+### C. v2.0 操作类型速查
+
+| 类型代码 | 名称 | 说明 | 典型指令 |
+|----------|------|------|----------|
+| `A` | 算术 | 算术运算 | `add`, `sub`, `mul`, `sdiv`, `madd` |
+| `L` | 逻辑 | 逻辑/位运算 | `and`, `orr`, `eor`, `lsl`, `lsr`, `asr` |
+| `M` | 内存 | 内存访问 | `ldr`, `str`, `ldp`, `stp`, `ldrb`, `strb` |
+| `B` | 分支 | 条件/无条件跳转 | `b`, `b.eq`, `b.ne`, `cbz`, `cbnz`, `tbz` |
+| `C` | 调用 | 函数调用 | `bl`, `blr` |
+| `R` | 返回 | 函数返回 | `ret` |
+
+### D. 参考资料
 
 - [QBDI 官方文档](https://qbdi.quarkslab.com/)
 - [Small-Trace 项目](https://github.com/user-attachments/files/18245555/libqdbi.so.zip)
@@ -548,6 +854,5 @@ fridac> smalltrace_analyze ~/Desktop/trace.log
 
 ---
 
-*文档生成时间: 2024-12-24*
+*文档更新时间: 2025-12-26*
 *作者: fridac*
-

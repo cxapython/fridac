@@ -391,7 +391,9 @@ function help() {
             LOG("    nativeHookFileIOFunctions(showStack) - Hook 文件IO函数 (open/read/write 等)", { c: Color.White });
 
             LOG("  📊 分析工具:", { c: Color.Blue });
-            LOG("    nativeAnalyzeSO(soName, showExports, showImports) - 分析SO文件", { c: Color.White });
+            LOG("    nativeAnalyzeSO(soName, options) - 分析SO文件 (识别JNI静态/动态注册)", { c: Color.White });
+            LOG("      options: { showExports:1, showImports:0, limit:0, outputFile:'path', jniOnly:0 }", { c: Color.Gray });
+            LOG("      示例: nativeAnalyzeSO('libnative.so', {outputFile:'/data/local/tmp/so.txt'})", { c: Color.Yellow });
             
             LOG("  ⚡ 便捷函数:", { c: Color.Blue });
             LOG("    nativeQuickHookCrypto(algorithm) - 快速Hook加密算法", { c: Color.White });

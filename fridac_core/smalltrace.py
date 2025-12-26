@@ -572,7 +572,7 @@ class SmallTraceManager:
         return True
     
     def get_trace_stats(self, output_file: str) -> Dict:
-        """分析追踪日志统计信息"""
+        """分析追踪日志统计信息（支持 v1.0 和 v2.0 格式）"""
         stats = {
             'total_lines': 0,
             'instructions': 0,
@@ -588,11 +588,15 @@ class SmallTraceManager:
             with open(output_file, 'r', errors='ignore') as f:
                 for line in f:
                     stats['total_lines'] += 1
-                    if line.startswith('0x'):
+                    # v1.0 格式: 0x... 开头
+                    # v2.0 格式: #序号 [D深度] [类型] 0x... 开头
+                    if line.startswith('0x') or (line.startswith('#') and len(line) > 1 and line[1].isdigit()):
                         stats['instructions'] += 1
-                    elif 'memory read' in line:
+                    # v1.0: memory read/write
+                    # v2.0: MEM_read/MEM_write
+                    elif 'memory read' in line or 'MEM_read' in line:
                         stats['memory_reads'] += 1
-                    elif 'memory write' in line:
+                    elif 'memory write' in line or 'MEM_write' in line:
                         stats['memory_writes'] += 1
         except Exception as e:
             log_error(f"分析追踪日志失败: {e}")
