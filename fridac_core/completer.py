@@ -144,6 +144,25 @@ class FridacCompleter:
             # ===== Frida Stalker (指令级追踪) =====
             'stalker_trace': ('🔍 Stalker 汇编追踪', "stalker_trace libtarget.so 0x1234 output.log"),
             
+            # ===== Ghidra 桥接命令 =====
+            'ghidra': ('🔗 连接 Ghidra (GhidraMCP)', "ghidra http://127.0.0.1:8080/"),
+            'ghidra_connect': ('🔗 连接 Ghidra', "ghidra_connect http://IP:PORT/"),
+            'gconnect': ('🔗 连接 Ghidra (简写)', "gconnect"),
+            'ghidra_help': ('❓ Ghidra 命令帮助', "ghidra_help"),
+            'ghelp': ('❓ Ghidra 帮助 (简写)', "ghelp"),
+            'gfuncs': ('📋 列出函数', "gfuncs 50"),
+            'gimports': ('📥 列出导入', "gimports 50"),
+            'gexports': ('📤 列出导出', "gexports 50"),
+            'gstrings': ('🔤 搜索字符串', "gstrings password 100"),
+            'gsearch': ('🔍 搜索函数名', "gsearch main"),
+            'gdecompile': ('📝 反编译函数', "gdecompile main"),
+            'gd': ('📝 反编译 (简写)', "gd 0x401000"),
+            'gdisasm': ('🔧 获取汇编代码', "gdisasm 0x401000"),
+            'gxrefs': ('🔗 交叉引用', "gxrefs 0x401000"),
+            'gcurrent': ('📍 当前选中地址/函数', "gcurrent"),
+            'gbytes': ('📦 读取内存字节', "gbytes 0x401000 32"),
+            'grename': ('✏️ 重命名函数', "grename sub_401000 decrypt_data"),
+            
             'help': ('❓ 显示帮助信息', "help()"),
             'q': ('🚪 退出程序', "q"),
             }

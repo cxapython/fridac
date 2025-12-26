@@ -301,6 +301,35 @@ class FridacSession:
             except Exception:
                 pass
 
+            # SO 分析输出文件处理
+            try:
+                if isinstance(payload, dict) and payload.get('type') == 'so_analysis_output':
+                    output_file = payload.get('outputFile')
+                    content = payload.get('content', '')
+                    so_name = payload.get('soName', 'unknown')
+                    stats = payload.get('stats', {})
+                    
+                    if output_file:
+                        try:
+                            # 确保目录存在
+                            output_dir = os.path.dirname(output_file)
+                            if output_dir and not os.path.exists(output_dir):
+                                os.makedirs(output_dir, exist_ok=True)
+                            
+                            with open(output_file, 'w', encoding='utf-8') as f:
+                                f.write(f"# SO Analysis Report: {so_name}\n")
+                                f.write(f"# Generated at: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                                f.write(f"# Stats: exports={stats.get('totalExports', 0)}, imports={stats.get('totalImports', 0)}, jni_static={stats.get('jniStaticFuncs', 0)}\n")
+                                f.write("\n")
+                                f.write(content)
+                            
+                            log_success(f"📄 SO 分析结果已写入: {output_file}")
+                        except Exception as e:
+                            log_error(f"写入 SO 分析文件失败: {e}")
+                    return
+            except Exception:
+                pass
+
             # 统一处理：若是结构化事件对象则走统一渲染，否则保持原有文本输出
             try:
                 if isinstance(payload, dict) and ('type' in payload or 'items' in payload or 'ts' in payload or 'timestamp' in payload):
@@ -1686,6 +1715,84 @@ def _handle_task_commands(session, user_input):
     # elif cmd == 'arm64dbi_pull':
     #     ...
     
+    # ===== Ghidra 桥接命令 =====
+    elif cmd in ['ghidra', 'ghidra_connect', 'gconnect']:
+        server_url = parts[1] if len(parts) > 1 else None
+        _handle_ghidra_connect(server_url)
+        return True
+    
+    elif cmd in ['ghidra_help', 'ghelp']:
+        _handle_ghidra_help()
+        return True
+    
+    elif cmd in ['gfuncs', 'ghidra_funcs']:
+        limit = int(parts[1]) if len(parts) > 1 else 50
+        _handle_ghidra_list_functions(limit)
+        return True
+    
+    elif cmd in ['gimports', 'ghidra_imports']:
+        limit = int(parts[1]) if len(parts) > 1 else 50
+        _handle_ghidra_list_imports(limit)
+        return True
+    
+    elif cmd in ['gexports', 'ghidra_exports']:
+        limit = int(parts[1]) if len(parts) > 1 else 50
+        _handle_ghidra_list_exports(limit)
+        return True
+    
+    elif cmd in ['gstrings', 'ghidra_strings']:
+        keyword = parts[1] if len(parts) > 1 else None
+        limit = int(parts[2]) if len(parts) > 2 else 100
+        _handle_ghidra_search_strings(keyword, limit)
+        return True
+    
+    elif cmd in ['gdecompile', 'ghidra_decompile', 'gd']:
+        if len(parts) < 2:
+            log_error("❌ 用法: gdecompile <函数名或地址>")
+            return True
+        _handle_ghidra_decompile(parts[1])
+        return True
+    
+    elif cmd in ['gdisasm', 'ghidra_disasm']:
+        if len(parts) < 2:
+            log_error("❌ 用法: gdisasm <地址>")
+            return True
+        _handle_ghidra_disasm(parts[1])
+        return True
+    
+    elif cmd in ['gxrefs', 'ghidra_xrefs']:
+        if len(parts) < 2:
+            log_error("❌ 用法: gxrefs <地址>")
+            return True
+        _handle_ghidra_xrefs(parts[1])
+        return True
+    
+    elif cmd in ['gcurrent', 'ghidra_current']:
+        _handle_ghidra_current()
+        return True
+    
+    elif cmd in ['gsearch', 'ghidra_search']:
+        if len(parts) < 2:
+            log_error("❌ 用法: gsearch <函数名关键字>")
+            return True
+        _handle_ghidra_search_functions(parts[1])
+        return True
+    
+    elif cmd in ['gbytes', 'ghidra_bytes']:
+        if len(parts) < 2:
+            log_error("❌ 用法: gbytes <地址> [大小]")
+            return True
+        size = int(parts[2]) if len(parts) > 2 else 32
+        _handle_ghidra_get_bytes(parts[1], size)
+        return True
+    
+    elif cmd in ['grename', 'ghidra_rename']:
+        if len(parts) < 3:
+            log_error("❌ 用法: grename <旧名称> <新名称>  或  grename <地址> <新名称>")
+            return True
+        _handle_ghidra_rename(parts[1], parts[2])
+        return True
+    
     # 检查是否是自定义函数命令
     elif _handle_custom_function_command(session, cmd, parts):
         return True
@@ -1904,7 +2011,11 @@ def _handle_smalltrace_command(session, parts):
         offset = parse_offset(parts[2])
         # 用户指定则用用户的，否则自动生成带时间戳的文件名
         package_name = getattr(session, 'app_name', None)
-        output_file = os.path.expanduser(parts[3]) if len(parts) > 3 else _generate_trace_output_path(package_name)
+        # 处理 null/none/- 等占位符，使用默认路径
+        output_arg = parts[3] if len(parts) > 3 else None
+        if output_arg and output_arg.lower() in ('null', 'none', '-', ''):
+            output_arg = None
+        output_file = os.path.expanduser(output_arg) if output_arg else _generate_trace_output_path(package_name)
         args_count = int(parts[4]) if len(parts) > 4 else 5
         # hexdump 参数 (第6个参数, 默认关闭)
         show_hexdump = False
@@ -2320,3 +2431,278 @@ def _handle_custom_function_command(session, cmd, parts):
     except Exception as e:
         log_error(f"❌ 执行自定义函数失败: {e}")
         return False
+
+
+# ============= Ghidra 桥接命令处理函数 =============
+
+# 全局 Ghidra 桥接实例
+_ghidra_bridge = None
+
+def _get_ghidra():
+    """获取 Ghidra 桥接实例"""
+    global _ghidra_bridge
+    if _ghidra_bridge is None:
+        try:
+            from .ghidra_bridge import GhidraBridge
+            _ghidra_bridge = GhidraBridge()
+        except ImportError as e:
+            log_error(f"❌ 无法导入 Ghidra 桥接模块: {e}")
+            return None
+    return _ghidra_bridge
+
+def _handle_ghidra_connect(server_url=None):
+    """连接到 Ghidra 服务器"""
+    global _ghidra_bridge
+    try:
+        from .ghidra_bridge import GhidraBridge, DEFAULT_GHIDRA_SERVER
+        
+        url = server_url or DEFAULT_GHIDRA_SERVER
+        _ghidra_bridge = GhidraBridge(url)
+        
+        if _ghidra_bridge.is_connected():
+            log_success(f"✅ 已连接到 Ghidra: {url}")
+            log_info("   输入 'ghidra_help' 或 'ghelp' 查看可用命令")
+        else:
+            log_error(f"❌ 无法连接到 Ghidra: {url}")
+            log_info("   请确保：")
+            log_info("   1. Ghidra 已安装 GhidraMCP 插件")
+            log_info("   2. 在 CodeBrowser 中打开二进制文件")
+            log_info("   3. 启用 GhidraMCP 插件 (File → Configure → Developer)")
+            _ghidra_bridge = None
+    except ImportError as e:
+        log_error(f"❌ 无法导入 Ghidra 桥接模块: {e}")
+        log_info("   请确保 requests 库已安装: pip install requests")
+
+def _handle_ghidra_help():
+    """显示 Ghidra 命令帮助"""
+    help_text = """
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                          🔧 Ghidra 桥接命令                                  ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+连接:
+  ghidra                              - 连接默认地址 (127.0.0.1:8080)
+  ghidra http://IP:PORT/              - 连接指定地址
+  ghelp                               - 显示此帮助
+
+查询:
+  gfuncs [limit]                      - 列出函数 (默认50个)
+  gimports [limit]                    - 列出导入
+  gexports [limit]                    - 列出导出
+  gstrings [keyword] [limit]          - 搜索字符串
+  gsearch <关键字>                    - 搜索函数名
+
+分析:
+  gdecompile <名称或地址>             - 反编译函数 (简写: gd)
+  gdisasm <地址>                      - 获取汇编代码
+  gcurrent                            - 获取当前选中的函数/地址
+  gbytes <地址> [大小]                - 读取内存字节
+
+交叉引用:
+  gxrefs <地址>                       - 获取地址的交叉引用
+
+修改:
+  grename <旧名> <新名>               - 重命名函数
+  grename <地址> <新名>               - 按地址重命名函数
+
+高级用法 (Python):
+  from fridac_core.ghidra_bridge import get_ghidra
+  g = get_ghidra()
+  g.decompile("main")
+  g.xrefs_to("0x401000")
+  g.create_struct("MyStruct", [{"name": "field1", "type": "int"}])
+"""
+    print(help_text)
+
+def _handle_ghidra_list_functions(limit=50):
+    """列出函数"""
+    g = _get_ghidra()
+    if not g:
+        log_error("❌ 请先连接 Ghidra: ghidra 或 ghidra <url>")
+        return
+    
+    funcs = g.list_functions(limit=limit)
+    if funcs and not any("连接失败" in str(f) for f in funcs):
+        log_success(f"📋 函数列表 (共 {len(funcs)} 个):")
+        for i, func in enumerate(funcs, 1):
+            print(f"  {i:4d}. {func}")
+    else:
+        log_error("❌ 获取函数列表失败")
+        if funcs:
+            for f in funcs:
+                print(f"   {f}")
+
+def _handle_ghidra_list_imports(limit=50):
+    """列出导入"""
+    g = _get_ghidra()
+    if not g:
+        log_error("❌ 请先连接 Ghidra: ghidra 或 ghidra <url>")
+        return
+    
+    imports = g.list_imports(limit=limit)
+    if imports and not any("连接失败" in str(f) for f in imports):
+        log_success(f"📥 导入列表 (共 {len(imports)} 个):")
+        for imp in imports:
+            print(f"  {imp}")
+    else:
+        log_error("❌ 获取导入列表失败")
+
+def _handle_ghidra_list_exports(limit=50):
+    """列出导出"""
+    g = _get_ghidra()
+    if not g:
+        log_error("❌ 请先连接 Ghidra: ghidra 或 ghidra <url>")
+        return
+    
+    exports = g.list_exports(limit=limit)
+    if exports and not any("连接失败" in str(f) for f in exports):
+        log_success(f"📤 导出列表 (共 {len(exports)} 个):")
+        for exp in exports:
+            print(f"  {exp}")
+    else:
+        log_error("❌ 获取导出列表失败")
+
+def _handle_ghidra_search_strings(keyword=None, limit=100):
+    """搜索字符串"""
+    g = _get_ghidra()
+    if not g:
+        log_error("❌ 请先连接 Ghidra: ghidra 或 ghidra <url>")
+        return
+    
+    strings = g.list_strings(filter=keyword, limit=limit)
+    if strings and not any("连接失败" in str(f) for f in strings):
+        title = f"🔤 字符串搜索: '{keyword}'" if keyword else "🔤 字符串列表"
+        log_success(f"{title} (共 {len(strings)} 个):")
+        for s in strings:
+            print(f"  {s}")
+    else:
+        log_error("❌ 搜索字符串失败")
+
+def _handle_ghidra_decompile(name_or_addr):
+    """反编译函数"""
+    g = _get_ghidra()
+    if not g:
+        log_error("❌ 请先连接 Ghidra: ghidra 或 ghidra <url>")
+        return
+    
+    # 判断是地址还是函数名
+    is_addr = name_or_addr.startswith("0x") or all(c in "0123456789abcdefABCDEF" for c in name_or_addr.replace("0x", ""))
+    
+    if is_addr:
+        code = g.decompile_at(name_or_addr)
+    else:
+        code = g.decompile(name_or_addr)
+    
+    if code and "连接失败" not in code and "错误" not in code:
+        log_success(f"📝 反编译: {name_or_addr}")
+        print("─" * 60)
+        print(code)
+        print("─" * 60)
+    else:
+        log_error(f"❌ 反编译失败: {code}")
+
+def _handle_ghidra_disasm(address):
+    """获取汇编代码"""
+    g = _get_ghidra()
+    if not g:
+        log_error("❌ 请先连接 Ghidra: ghidra 或 ghidra <url>")
+        return
+    
+    asm = g.disassemble(address)
+    if asm and not any("连接失败" in str(a) for a in asm):
+        log_success(f"🔧 汇编代码: {address}")
+        print("─" * 60)
+        for line in asm:
+            print(f"  {line}")
+        print("─" * 60)
+    else:
+        log_error(f"❌ 获取汇编失败")
+
+def _handle_ghidra_xrefs(address):
+    """获取交叉引用"""
+    g = _get_ghidra()
+    if not g:
+        log_error("❌ 请先连接 Ghidra: ghidra 或 ghidra <url>")
+        return
+    
+    xrefs_to = g.xrefs_to(address)
+    xrefs_from = g.xrefs_from(address)
+    
+    log_success(f"🔗 交叉引用: {address}")
+    
+    print("\n  📥 引用到此地址 (xrefs_to):")
+    if xrefs_to and not any("连接失败" in str(x) for x in xrefs_to):
+        for xref in xrefs_to:
+            print(f"    {xref}")
+    else:
+        print("    (无)")
+    
+    print("\n  📤 此地址引用 (xrefs_from):")
+    if xrefs_from and not any("连接失败" in str(x) for x in xrefs_from):
+        for xref in xrefs_from:
+            print(f"    {xref}")
+    else:
+        print("    (无)")
+
+def _handle_ghidra_current():
+    """获取当前选中的函数/地址"""
+    g = _get_ghidra()
+    if not g:
+        log_error("❌ 请先连接 Ghidra: ghidra 或 ghidra <url>")
+        return
+    
+    addr = g.get_current_address()
+    func = g.get_current_function()
+    
+    log_success("📍 Ghidra 当前选中:")
+    print(f"  地址: {addr}")
+    print(f"  函数: {func}")
+
+def _handle_ghidra_search_functions(keyword):
+    """搜索函数名"""
+    g = _get_ghidra()
+    if not g:
+        log_error("❌ 请先连接 Ghidra: ghidra 或 ghidra <url>")
+        return
+    
+    funcs = g.search_functions(keyword)
+    if funcs and not any("连接失败" in str(f) or "错误" in str(f) for f in funcs):
+        log_success(f"🔍 搜索函数 '{keyword}' (共 {len(funcs)} 个):")
+        for func in funcs:
+            print(f"  {func}")
+    else:
+        log_error(f"❌ 搜索失败或无结果")
+
+def _handle_ghidra_get_bytes(address, size=32):
+    """读取内存字节"""
+    g = _get_ghidra()
+    if not g:
+        log_error("❌ 请先连接 Ghidra: ghidra 或 ghidra <url>")
+        return
+    
+    hexdump = g.get_bytes(address, size)
+    if hexdump and "连接失败" not in hexdump:
+        log_success(f"📦 内存字节: {address} ({size} bytes)")
+        print(hexdump)
+    else:
+        log_error(f"❌ 读取失败: {hexdump}")
+
+def _handle_ghidra_rename(old_name_or_addr, new_name):
+    """重命名函数"""
+    g = _get_ghidra()
+    if not g:
+        log_error("❌ 请先连接 Ghidra: ghidra 或 ghidra <url>")
+        return
+    
+    # 判断是地址还是函数名
+    is_addr = old_name_or_addr.startswith("0x") or all(c in "0123456789abcdefABCDEF" for c in old_name_or_addr.replace("0x", ""))
+    
+    if is_addr:
+        result = g.rename_function_at(old_name_or_addr, new_name)
+    else:
+        result = g.rename_function(old_name_or_addr, new_name)
+    
+    if "错误" not in result and "连接失败" not in result:
+        log_success(f"✅ 重命名成功: {old_name_or_addr} → {new_name}")
+    else:
+        log_error(f"❌ 重命名失败: {result}")

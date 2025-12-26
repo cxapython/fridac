@@ -164,41 +164,145 @@ fridac> objectdump 0x108bb               # 深入查看嵌套对象
 | `okhttpResend(n)` | 重放请求 |
 | `fetch('filter')` | 网络抓包 |
 
+### Ghidra 桥接 (GhidraMCP)
+
+直接在 fridac 中调用 Ghidra 静态分析功能，无需 AI/MCP。
+
+**前提条件**：
+1. Ghidra 已安装 [GhidraMCP](https://github.com/LaurieWired/GhidraMCP) 插件
+2. 在 CodeBrowser 中打开二进制文件并启用插件
+3. HTTP 服务器运行在 `http://127.0.0.1:8080/`
+
+| 命令 | 说明 |
+|------|------|
+| `ghidra [url]` | 连接 Ghidra 服务器 |
+| `ghelp` | 显示 Ghidra 命令帮助 |
+| `gfuncs [limit]` | 列出函数 |
+| `gimports` / `gexports` | 列出导入/导出 |
+| `gstrings [keyword]` | 搜索字符串 |
+| `gsearch <keyword>` | 搜索函数名 |
+| `gdecompile <name/addr>` | 反编译函数（简写: `gd`） |
+| `gdisasm <addr>` | 获取汇编代码 |
+| `gxrefs <addr>` | 查看交叉引用 |
+| `gcurrent` | 获取当前选中地址/函数 |
+| `gbytes <addr> [size]` | 读取内存字节 |
+| `grename <old> <new>` | 重命名函数 |
+
+**使用示例**：
+
+```bash
+fridac> ghidra                           # 连接默认地址
+fridac> ghidra http://192.168.1.100:8080/  # 连接远程 Ghidra
+
+fridac> gfuncs 50                        # 列出前50个函数
+fridac> gstrings password                # 搜索包含 "password" 的字符串
+fridac> gd main                          # 反编译 main 函数
+fridac> gd 0x21244                       # 按地址反编译
+fridac> gxrefs 0x21244                   # 查看交叉引用
+fridac> grename sub_21244 decryptData    # 重命名函数
+```
+
+**Python API**（高级用法）：
+
+```python
+from fridac_core.ghidra_bridge import GhidraBridge
+
+g = GhidraBridge("http://127.0.0.1:8080/")
+print(g.decompile("main"))           # 反编译
+print(g.xrefs_to("0x401000"))        # 交叉引用
+g.create_struct("MyStruct", [{"name": "field1", "type": "int"}])  # 创建结构体
+```
+
 ### Arm64Trace (QBDI 汇编追踪)
 
 基于 [Arm64Trace](https://github.com/cxapython/Arm64Trace) 项目的 SO 汇编级追踪功能，可追踪 Native 函数执行的每条汇编指令。
 
-**v2.0 增强功能**：
-- 📊 **完整寄存器变化**：记录所有变化的寄存器，不再仅记录第一个
+**核心功能**：
+- 📊 **完整寄存器变化**：记录所有变化的寄存器
 - 🔢 **指令序号**：每条指令带唯一序号，便于精确定位
 - 📈 **调用深度**：`[D1]/[D2]/[D3]` 标记函数嵌套层级
 - 🏷️ **操作类型**：`[A]`算术/`[L]`逻辑/`[M]`内存/`[B]`分支/`[C]`调用/`[R]`返回
 - 🔍 **源寄存器追踪**：内存写入记录数据来源寄存器
 
+**v2.1 新增功能**：
+- 📱 **JNI 追踪**：自动检测 FindClass、GetMethodID、RegisterNatives、NewStringUTF 等
+- 🔧 **Syscall 追踪**：自动检测 openat、read、write、mmap、connect 等系统调用
+- 📊 **日志级别控制**：0=关闭, 1=简洁(一行), 2=详细(展开)
+
 | 命令 | 说明 |
 |------|------|
-| `smalltrace <so> <offset> [argc]` | 按偏移追踪 SO 函数 |
-| `smalltrace_symbol <so> <symbol> [argc]` | 按符号名追踪 |
+| `smalltrace <so> <offset> [output] [argc] [hexdump] [jni] [syscall] [level]` | 按偏移追踪 |
+| `smalltrace_symbol <so> <symbol> [output] [argc] [hexdump]` | 按符号追踪 |
 | `smalltrace_pull [output]` | 拉取追踪日志到本地 |
 | `smalltrace_status` | 查看追踪状态和统计 |
+| `smalltrace_analyze <file>` | 分析追踪日志 |
+
+**参数说明**：
+
+| 参数 | 类型 | 说明 | 默认值 |
+|------|------|------|--------|
+| `so` | string | 目标 SO 文件名 | 必填 |
+| `offset`/`symbol` | hex/string | 函数偏移或符号名 | 必填 |
+| `output` | string | `smalltrace_pull` 拉取时的本地保存路径 | ~/Desktop/qbdi_trace_*.log |
+| `argc` | int | 函数参数数量，用于记录 X0-Xn 寄存器的参数值 | 5 |
+| `hexdump` | bool | 是否显示内存 hexdump | false |
+| `jni` | bool | 启用 JNI 追踪 | false |
+| `syscall` | bool | 启用 Syscall 追踪 | false |
+| `level` | int | JNI/Syscall 日志级别 (0/1/2) | 2 |
+
+> 📝 **日志路径说明**：追踪日志实际生成在设备的 `/data/data/<package>/qbdi_trace_<package>.log`，`output` 参数指定 `smalltrace_pull` 拉取到本地时的保存路径。
 
 **使用示例**：
 
 ```bash
-# 追踪 libjnicalculator.so 偏移 0x21244 处的函数
+# 基础追踪（自动生成输出文件名）
 fridac> smalltrace libjnicalculator.so 0x21244
 
 # 按符号名追踪
 fridac> smalltrace_symbol libtarget.so encryptToMd5Hex
 
-# 触发目标函数后，拉取追踪日志
+# 指定输出文件和参数数量
+fridac> smalltrace libnative.so 0x12340 ~/trace.log 5
+
+# 启用 hexdump (显示内存读写周围的数据)
+fridac> smalltrace libnative.so 0x21244 ~/trace.log 5 true
+
+# 跳过 output 参数用 null 占位，启用 JNI 追踪 (简洁模式)
+fridac> smalltrace libnative.so 0x12340 null 5 false true false 1
+
+# 启用 JNI + Syscall 追踪 (详细模式)
+fridac> smalltrace libnative.so 0x12340 null 5 false true true 2
+
+# 拉取追踪日志（使用自动生成的路径）
+fridac> smalltrace_pull
+
+# 拉取到指定路径
 fridac> smalltrace_pull ~/Desktop/trace.log
 
-# 查看追踪状态（v2.0 显示操作类型分布）
-fridac> smalltrace_status
+# 分析追踪日志
+fridac> smalltrace_analyze ~/Desktop/trace.log
 ```
 
-**v2.0 日志示例**：
+> 💡 **提示**：
+> - 不想指定 `output` 参数时，用 `null` 占位，系统会自动生成 `~/Desktop/qbdi_trace_<package>_<timestamp>.log`
+> - `smalltrace` 中指定的 output 路径会被记住，后续 `smalltrace_pull` 无参数时自动使用该路径
+
+**JNI/Syscall 追踪输出示例**：
+
+```bash
+# JNI 追踪 (简洁模式 level=1)
+[JNI] 🏷️ FindClass "com/example/Crypto"
+[JNI] 🏷️ GetMethodID "encrypt" "(Ljava/lang/String;)Ljava/lang/String;"
+[JNI] 📝 NewStringUTF "Hello World"
+[JNI] 📞 CallObjectMethod -> 0x12345678
+
+# Syscall 追踪 (简洁模式 level=1)
+[SVC] 📄 openat(AT_FDCWD, "/data/local/tmp/test.txt", O_RDONLY) = 3
+[SVC] 📄 read(3, buf, 1024) = 256
+[SVC] 📄 close(3) = 0
+```
+
+**v2.0 日志格式**：
 ```
 #1 [D1] [M] 0x7dd046e244    0x21244    ldr    x16, #0x8    ;X16=0x0->0x7e8897c000
   MEM_read @0x7dd046e24c size=8 val=00c097887e000000
@@ -210,6 +314,8 @@ fridac> smalltrace_status
 > ⚠️ **注意**: Small-Trace 仅支持 ARM64 架构，首次使用会自动下载 libqdbi.so (~18MB)。需要 Root 权限和关闭 SELinux。
 >
 > 📊 使用 [QBDITraceViewer](https://github.com/cxapython/QBDITraceViewer) 可视化分析追踪日志，支持值流追踪和算法还原。
+>
+> 📖 详细分析指南请参考 [SMALLTRACE_ANALYSIS_GUIDE.md](SMALLTRACE_ANALYSIS_GUIDE.md)
 
 ## 📁 项目结构
 
@@ -221,6 +327,7 @@ fridac/
 │   ├── task_manager.py         # 任务系统
 │   ├── script_manager.py       # 脚本管理
 │   ├── smalltrace.py           # Small-Trace 集成
+│   ├── ghidra_bridge.py        # Ghidra 桥接 (GhidraMCP)
 │   └── ...
 ├── scripts/                    # 自定义脚本目录
 │   ├── security/               # 安全相关脚本

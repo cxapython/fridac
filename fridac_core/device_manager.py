@@ -483,6 +483,9 @@ class DeviceManager:
         self._run_adb_shell('pkill -9 -f frida-server', as_root=True)
         time.sleep(0.5)
         
+        # 确保执行权限（防止权限被重置导致启动失败）
+        self._run_adb_shell(f'chmod 755 {self.frida_server_path}', as_root=True)
+        
         # 后台启动 frida-server
         # 使用 nohup 和 & 确保后台运行
         start_cmd = f'nohup {self.frida_server_path} -D >/dev/null 2>&1 &'
