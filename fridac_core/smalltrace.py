@@ -289,7 +289,7 @@ class SmallTraceManager:
     let isTraceSoLoaded = false;
     
     console.log("═══════════════════════════════════════════════════════════════");
-    console.log("     Small-Trace (QBDI) - SO 汇编追踪 v2.1");
+    console.log("     Small-Trace (QBDI) - SO 汇编追踪 v2.2");
     console.log("═══════════════════════════════════════════════════════════════");
     console.log("[*] 目标 SO: " + SO_name);
     console.log("[*] 追踪模式: " + (Trace_Mode === 0 ? "符号" : "偏移"));
@@ -566,10 +566,11 @@ class FunctionCall:
 
 class QBDITraceAnalyzer:
     """
-    QBDI Trace 文件解析器（支持 v1.0, v2.0, v2.1 格式）
+    QBDI Trace 文件解析器（支持 v1.0, v2.0, v2.1, v2.2 格式）
     
-    v2.1 格式：
-    # QBDI Trace v2.1 (optimized)
+    v2.2 格式（性能优化版）：
+    # QBDI Trace v2.2 (optimized)
+    # 改进：一次遍历寄存器 + 延迟检查 w/x 格式
     # Format: #seq [Ddepth] [type] address offset instruction ;reg_changes
     #
     #1 [D1] [M] 0x7dd046e244  0x21244  ldr x16, #0x8  ;X16=0x0->0x7e8897c000
@@ -665,11 +666,13 @@ class QBDITraceAnalyzer:
                     # 0. 检测版本和跳过注释
                     if line.startswith('#'):
                         if len(line) > 1 and line[1].isdigit():
-                            # 这是 v2.0/v2.1 指令行，不跳过
+                            # 这是 v2.0+ 指令行，不跳过
                             pass
                         else:
                             # 这是注释行
-                            if 'QBDI Trace v2.1' in line:
+                            if 'QBDI Trace v2.2' in line:
+                                self.trace_version = "2.2"
+                            elif 'QBDI Trace v2.1' in line:
                                 self.trace_version = "2.1"
                             elif 'QBDI Trace v2' in line:
                                 self.trace_version = "2.0"
@@ -940,8 +943,8 @@ class QBDITraceAnalyzer:
         log_info(f"   内存写: {self.mem_write_count:,}")
         log_info(f"   函数调用: {len(self.function_calls)}")
         
-        # v2.0/v2.1 特有统计
-        if self.trace_version in ["2.0", "2.1"] and self.op_type_counts:
+        # v2.0+ 特有统计
+        if self.trace_version in ["2.0", "2.1", "2.2"] and self.op_type_counts:
             log_info("")
             log_info("🏷️  操作类型分布:")
             op_names = {'A': '算术', 'L': '逻辑', 'M': '内存', 'B': '分支', 'C': '调用', 'R': '返回'}
