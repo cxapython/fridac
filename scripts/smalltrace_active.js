@@ -6,7 +6,7 @@
  * @example traceAndCall('libtarget.so', 0x1000, 'test', 3)  // 3个参数
  */
 
-const QDBI_PATH = "/data/local/tmp/libqdbi.so";
+var QDBI_PATH = (typeof QDBI_PATH !== 'undefined') ? QDBI_PATH : "/data/local/tmp/libqdbi.so";
 
 /**
  * 一体化追踪+调用

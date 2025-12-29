@@ -6,7 +6,7 @@
  * @example traceAndCallJNI('lib.so', 0x1000, 'data')  // 单参数
  */
 
-const QDBI_PATH = "/data/local/tmp/libqdbi.so";
+var QDBI_PATH = (typeof QDBI_PATH !== 'undefined') ? QDBI_PATH : "/data/local/tmp/libqdbi.so";
 
 /**
  * 一体化 JNI 追踪+调用 (最简接口)
