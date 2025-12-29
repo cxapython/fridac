@@ -317,46 +317,59 @@ fridac> smalltrace_analyze ~/Desktop/trace.log
 >
 > 📖 详细分析指南请参考 [SMALLTRACE_ANALYSIS_GUIDE.md](SMALLTRACE_ANALYSIS_GUIDE.md)
 
-### 主动调用脚本 (smalltrace_active.js)
+### 主动调用脚本
 
-对于需要主动触发函数调用的场景，可以使用 `scripts/smalltrace_active.js` 脚本：
+对于需要主动触发函数调用的场景，提供两个脚本：
 
-**功能特性**：
-- 🔧 **一体化操作**: 安装 QBDI Hook + 主动调用函数
-- 🎯 **智能签名识别**: 自动尝试多种函数签名
-- 📦 **模块管理**: 支持动态加载 SO
+#### 普通 Native 函数 (smalltrace_active.js)
+
+适用于 `char* func(char* input, int len, char* output, ...)` 等普通 Native 函数。
 
 | 函数 | 说明 |
 |------|------|
 | `traceAndCall(so, offset, input, argc)` | 追踪 + 主动调用 |
-| `loadSo(path, java)` | 加载 SO (支持 Java/Native) |
-| `listModules(filter)` | 列出已加载模块 |
+| `loadSo(path, java)` | 加载 SO |
+| `listModules(filter)` | 列出模块 |
 | `callRaw(so, offset, ret, types, args)` | 自定义签名调用 |
-| `stHelp()` | 显示帮助 |
-
-**使用示例**：
 
 ```bash
-# 在 Frida CLI 中加载脚本
 frida -U -l scripts/smalltrace_active.js -f com.example.app --no-pause
 
-# 追踪并调用
+# 追踪普通 Native 函数
 traceAndCall('libjnicalculator.so', 0x21244, 'hello')
-
-# 指定参数数量
 traceAndCall('libtarget.so', 0x1000, 'test', 3)
-
-# 加载 SO 并调用
-loadSo('libtarget.so', true)  // 使用 Java System.loadLibrary
-listModules('target')          // 确认已加载
-
-# 自定义签名调用
-callRaw('libjnicalculator.so', 0x21244, 'int', 
-        ['pointer', 'int', 'pointer'], 
-        [Memory.allocUtf8String('hello'), 5, Memory.alloc(256)])
 ```
 
-> 💡 **提示**: `traceAndCall` 会自动尝试常见的 3-5 参数签名，适用于大多数加密函数。如需精确控制，使用 `callRaw`。
+#### JNI 函数 (smalltrace_jni_active.js)
+
+适用于 `jstring func(JNIEnv*, jobject, jstring, ...)` 等 JNI 函数。
+
+| 函数 | 说明 |
+|------|------|
+| `traceAndCallJNI(so, offset, arg1, arg2, ...)` | 追踪 + 调用 JNI 函数 |
+| `traceJNIBySymbol(so, symbol, arg1, arg2, ...)` | 通过符号名追踪 |
+| `findExport(so, keyword)` | 查找导出符号偏移 |
+| `jniHelp()` | 显示帮助 |
+
+```bash
+frida -U -l scripts/smalltrace_jni_active.js -f com.example.app --no-pause
+
+# 追踪 JNI 函数: jstring encryptString2(JNIEnv*, jobject, jstring input, jstring key)
+traceAndCallJNI('libjnicalculator.so', 0x1ed98, 'hello', '1234qwer')
+
+# 单参数 JNI 函数: jstring encrypt(JNIEnv*, jobject, jstring input)
+traceAndCallJNI('libjnicalculator.so', 0x21244, 'hello')
+
+# 通过符号名调用
+traceJNIBySymbol('libjnicalculator.so', 'Java_com_example_MainActivity_encryptString2', 'hello', 'key')
+
+# 查找符号偏移
+findExport('libjnicalculator.so', 'encrypt')
+```
+
+> 💡 **区别**: 
+> - `traceAndCall` 用于普通 Native 函数，参数是 `char*`、`int` 等
+> - `traceAndCallJNI` 用于 JNI 函数，自动处理 `JNIEnv*`、`jobject`、`jstring` 参数
 
 ## 📁 项目结构
 
