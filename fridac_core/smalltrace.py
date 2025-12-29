@@ -75,11 +75,6 @@ class SmallTraceConfig:
     output_file: str = ""           # 本地输出文件路径
     package_name: str = ""          # 应用包名 (用于定位追踪日志)
     show_hexdump: bool = False      # 是否显示 hexdump 内容 (默认关闭)
-    jni_trace: bool = False         # 是否启用 JNI 追踪 (默认关闭)
-    syscall_trace: bool = False     # 是否启用 Syscall 追踪 (默认关闭)
-    # 新增: 日志级别控制 (0=关闭, 1=简洁, 2=详细)
-    jni_log_level: int = 2          # JNI 日志级别 (默认详细)
-    syscall_log_level: int = 2      # Syscall 日志级别 (默认详细)
 
 
 class SmallTraceManager:
@@ -130,10 +125,10 @@ class SmallTraceManager:
         
         code, stdout, _ = self._run_adb_shell(f'ls -la {LIBQDBI_DEVICE_PATH}')
         if code == 0 and 'libqdbi.so' in stdout:
-            # 检查文件大小 (正常应该 > 15MB)
+            # 检查文件大小 (正常应该 > 5MB)
             try:
                 size = int(stdout.split()[4])
-                if size > 15000000:
+                if size > 5000000:
                     self.libqdbi_ready = True
                     log_success(f"✅ Small-Trace 追踪库已就绪 ({size // 1024 // 1024}MB)")
                     return True
@@ -275,10 +270,6 @@ class SmallTraceManager:
         """
         # 转换参数为 JS 整数
         hexdump_flag = 1 if config.show_hexdump else 0
-        jni_trace_flag = 1 if config.jni_trace else 0
-        syscall_trace_flag = 1 if config.syscall_trace else 0
-        jni_log_level = config.jni_log_level
-        syscall_log_level = config.syscall_log_level
         
         script = f'''// Small-Trace 追踪脚本 (由 fridac 生成)
 // 目标: {config.so_name} @ 0x{config.offset:x} ({config.symbol or 'offset'})
@@ -291,27 +282,14 @@ class SmallTraceManager:
     const Trace_Mode = {config.trace_mode};  // 0=符号, 1=偏移
     const args = {config.args_count};
     const show_hexdump = {hexdump_flag};  // hexdump 显示开关
-    const jni_trace = {jni_trace_flag};    // JNI 追踪开关
-    const syscall_trace = {syscall_trace_flag};  // Syscall 追踪开关
-    const jni_log_level = {jni_log_level};  // JNI 日志级别 (0=关闭, 1=简洁, 2=详细)
-    const syscall_log_level = {syscall_log_level};  // Syscall 日志级别
     
     let Calvin_Trace_symbol_ex = null;
     let Calvin_Trace_offset_ex = null;
-    let Calvin_Trace_offset_full = null;
     let gqb_set_hexdump_enabled = null;
-    let gqb_enable_jni_trace = null;
-    let gqb_disable_jni_trace = null;
-    let gqb_enable_syscall_trace = null;
-    let gqb_disable_syscall_trace = null;
-    let gqb_set_jni_log_level = null;
-    let gqb_set_syscall_log_level = null;
-    let gqb_print_jni_stats = null;
-    let gqb_print_syscall_stats = null;
     let isTraceSoLoaded = false;
     
     console.log("═══════════════════════════════════════════════════════════════");
-    console.log("     Small-Trace (QBDI) - SO 汇编追踪");
+    console.log("     Small-Trace (QBDI) - SO 汇编追踪 v2.1");
     console.log("═══════════════════════════════════════════════════════════════");
     console.log("[*] 目标 SO: " + SO_name);
     console.log("[*] 追踪模式: " + (Trace_Mode === 0 ? "符号" : "偏移"));
@@ -322,57 +300,12 @@ class SmallTraceManager:
     }}
     console.log("[*] 参数数量: " + args);
     console.log("[*] Hexdump: " + (show_hexdump ? "开启" : "关闭"));
-    console.log("[*] JNI 追踪: " + (jni_trace ? "开启 (级别:" + jni_log_level + ")" : "关闭"));
-    console.log("[*] Syscall 追踪: " + (syscall_trace ? "开启 (级别:" + syscall_log_level + ")" : "关闭"));
-    console.log("[*] 日志级别说明: 0=关闭, 1=简洁(一行), 2=详细(展开)");
     console.log("");
     
-    function setupJniSyscallTrace() {{
-        // 设置 JNI 追踪
-        if (jni_trace && gqb_enable_jni_trace) {{
-            try {{
-                // 先设置日志级别
-                if (gqb_set_jni_log_level) {{
-                    const setLevel = new NativeFunction(gqb_set_jni_log_level, 'void', ['int']);
-                    setLevel(jni_log_level);
-                    console.log("[+] JNI 日志级别: " + jni_log_level + " (" + (jni_log_level == 1 ? "简洁" : "详细") + ")");
-                }}
-                
-                const enableJni = new NativeFunction(gqb_enable_jni_trace, 'void', []);
-                enableJni();
-                console.log("[+] JNI 追踪已启用");
-            }} catch (e) {{
-                console.log("[-] JNI 追踪启用失败: " + e);
-            }}
-        }}
-        
-        // 设置 Syscall 追踪
-        if (syscall_trace && gqb_enable_syscall_trace) {{
-            try {{
-                // 先设置日志级别
-                if (gqb_set_syscall_log_level) {{
-                    const setLevel = new NativeFunction(gqb_set_syscall_log_level, 'void', ['int']);
-                    setLevel(syscall_log_level);
-                    console.log("[+] Syscall 日志级别: " + syscall_log_level + " (" + (syscall_log_level == 1 ? "简洁" : "详细") + ")");
-                }}
-                
-                const enableSyscall = new NativeFunction(gqb_enable_syscall_trace, 'void', []);
-                enableSyscall();
-                console.log("[+] Syscall 追踪已启用");
-            }} catch (e) {{
-                console.log("[-] Syscall 追踪启用失败: " + e);
-            }}
-        }}
-    }}
-    
     function traceSymbolOrOffset(soName, symbolName, addr, mode) {{
-        // 先设置 JNI/Syscall 追踪
-        setupJniSyscallTrace();
-        
         if (mode === 0) {{
             console.log("[*] 开始符号追踪: " + soName + " -> " + symbolName);
             if (Calvin_Trace_symbol_ex !== null) {{
-                // 使用带 hexdump 参数的新函数
                 const symbolFunc = new NativeFunction(Calvin_Trace_symbol_ex, 'int', ['pointer', 'pointer', 'int', 'int']);
                 try {{
                     const agr1 = Memory.allocUtf8String(SO_name);
@@ -386,34 +319,17 @@ class SmallTraceManager:
         }} else if (mode === 1) {{
             console.log("[*] 开始偏移量追踪: " + soName + " @ 0x" + addr.toString(16));
             
-            // 优先使用带完整控制的新函数 Calvin_Trace_offset_full
-            if (Calvin_Trace_offset_full !== null) {{
-                const fullFunc = new NativeFunction(Calvin_Trace_offset_full, 'int', ['pointer', 'long', 'int', 'int', 'int', 'int']);
+            if (Calvin_Trace_offset_ex !== null) {{
+                const offsetFunc = new NativeFunction(Calvin_Trace_offset_ex, 'int', ['pointer', 'long', 'int', 'int']);
                 try {{
                     const agr1 = Memory.allocUtf8String(SO_name);
-                    const result = fullFunc(agr1, addr, args, show_hexdump, jni_trace, syscall_trace);
-                    console.log("[+] 偏移量追踪启动 (完整模式)，结果: " + result);
+                    const result = offsetFunc(agr1, addr, args, show_hexdump);
+                    console.log("[+] 偏移量追踪启动，结果: " + result);
                     printTraceInfo();
                 }} catch (e) {{
-                    console.log("[-] 完整追踪失败，尝试兼容模式: " + e);
-                    fallbackTrace(addr);
+                    console.log("[-] 偏移量追踪失败: " + e);
                 }}
-            }} else if (Calvin_Trace_offset_ex !== null) {{
-                fallbackTrace(addr);
             }}
-        }}
-    }}
-    
-    function fallbackTrace(addr) {{
-        // 兼容旧版本 libqdbi.so
-        const offsetFunc = new NativeFunction(Calvin_Trace_offset_ex, 'int', ['pointer', 'long', 'int', 'int']);
-        try {{
-            const agr1 = Memory.allocUtf8String(SO_name);
-            const result = offsetFunc(agr1, addr, args, show_hexdump);
-            console.log("[+] 偏移量追踪启动 (兼容模式)，结果: " + result);
-            printTraceInfo();
-        }} catch (e) {{
-            console.log("[-] 偏移量追踪失败: " + e);
         }}
     }}
     
@@ -422,13 +338,7 @@ class SmallTraceManager:
         console.log("═══════════════════════════════════════════════════════════════");
         console.log("  Small-Trace 已启动！");
         console.log("  追踪输出保存在设备: /data/data/<package>/qbdi_trace_<package>.log");
-        if (jni_trace) {{
-            console.log("  📱 JNI 追踪: 自动检测 FindClass, GetMethodID, RegisterNatives 等");
-        }}
-        if (syscall_trace) {{
-            console.log("  🔧 Syscall 追踪: 自动检测 openat, read, write, mmap 等");
-        }}
-        console.log("  查看命令: adb logcat | grep -iE 'SmallTrace|GQB|QBDI|JNI|SVC'");
+        console.log("  查看命令: adb logcat | grep -iE 'SmallTrace|GQB|QBDI'");
         console.log("═══════════════════════════════════════════════════════════════");
     }}
     
@@ -446,24 +356,10 @@ class SmallTraceManager:
             // 获取追踪函数
             Calvin_Trace_symbol_ex = Module.findExportByName(TraceSoPath, 'Calvin_Trace_symbol_ex');
             Calvin_Trace_offset_ex = Module.findExportByName(TraceSoPath, 'Calvin_Trace_offset_ex');
-            Calvin_Trace_offset_full = Module.findExportByName(TraceSoPath, 'Calvin_Trace_offset_full');
             gqb_set_hexdump_enabled = Module.findExportByName(TraceSoPath, 'gqb_set_hexdump_enabled');
-            
-            // 获取 JNI/Syscall 追踪函数
-            gqb_enable_jni_trace = Module.findExportByName(TraceSoPath, 'gqb_enable_jni_trace');
-            gqb_disable_jni_trace = Module.findExportByName(TraceSoPath, 'gqb_disable_jni_trace');
-            gqb_enable_syscall_trace = Module.findExportByName(TraceSoPath, 'gqb_enable_syscall_trace');
-            gqb_disable_syscall_trace = Module.findExportByName(TraceSoPath, 'gqb_disable_syscall_trace');
-            gqb_set_jni_log_level = Module.findExportByName(TraceSoPath, 'gqb_set_jni_log_level');
-            gqb_set_syscall_log_level = Module.findExportByName(TraceSoPath, 'gqb_set_syscall_log_level');
-            gqb_print_jni_stats = Module.findExportByName(TraceSoPath, 'gqb_print_jni_stats');
-            gqb_print_syscall_stats = Module.findExportByName(TraceSoPath, 'gqb_print_syscall_stats');
             
             console.log("[*] Calvin_Trace_symbol_ex: " + Calvin_Trace_symbol_ex);
             console.log("[*] Calvin_Trace_offset_ex: " + Calvin_Trace_offset_ex);
-            console.log("[*] Calvin_Trace_offset_full: " + Calvin_Trace_offset_full);
-            if (jni_trace) console.log("[*] gqb_enable_jni_trace: " + gqb_enable_jni_trace);
-            if (syscall_trace) console.log("[*] gqb_enable_syscall_trace: " + gqb_enable_syscall_trace);
             
             if ((Trace_Mode === 0 && Calvin_Trace_symbol_ex) || (Trace_Mode === 1 && Calvin_Trace_offset_ex)) {{
                 traceSymbolOrOffset(SO_name, Symbol, so_offset, Trace_Mode);
@@ -501,17 +397,8 @@ class SmallTraceManager:
                             
                             Calvin_Trace_symbol_ex = Module.findExportByName(TraceSoPath, 'Calvin_Trace_symbol_ex');
                             Calvin_Trace_offset_ex = Module.findExportByName(TraceSoPath, 'Calvin_Trace_offset_ex');
-                            Calvin_Trace_offset_full = Module.findExportByName(TraceSoPath, 'Calvin_Trace_offset_full');
                             
-                            // 获取 JNI/Syscall 追踪函数
-                            gqb_enable_jni_trace = Module.findExportByName(TraceSoPath, 'gqb_enable_jni_trace');
-                            gqb_enable_syscall_trace = Module.findExportByName(TraceSoPath, 'gqb_enable_syscall_trace');
-                            gqb_set_jni_log_level = Module.findExportByName(TraceSoPath, 'gqb_set_jni_log_level');
-                            gqb_set_syscall_log_level = Module.findExportByName(TraceSoPath, 'gqb_set_syscall_log_level');
-                            gqb_print_jni_stats = Module.findExportByName(TraceSoPath, 'gqb_print_jni_stats');
-                            gqb_print_syscall_stats = Module.findExportByName(TraceSoPath, 'gqb_print_syscall_stats');
-                            
-                            if ((Trace_Mode === 0 && Calvin_Trace_symbol_ex) || (Trace_Mode === 1 && (Calvin_Trace_offset_full || Calvin_Trace_offset_ex))) {{
+                            if ((Trace_Mode === 0 && Calvin_Trace_symbol_ex) || (Trace_Mode === 1 && Calvin_Trace_offset_ex)) {{
                                 traceSymbolOrOffset(traced_so, Symbol, so_offset, Trace_Mode);
                             }}
                         }} catch (e) {{
@@ -572,7 +459,7 @@ class SmallTraceManager:
         return True
     
     def get_trace_stats(self, output_file: str) -> Dict:
-        """分析追踪日志统计信息（支持 v1.0 和 v2.0 格式）"""
+        """分析追踪日志统计信息（支持 v1.0 和 v2.0/v2.1 格式）"""
         stats = {
             'total_lines': 0,
             'instructions': 0,
@@ -589,11 +476,11 @@ class SmallTraceManager:
                 for line in f:
                     stats['total_lines'] += 1
                     # v1.0 格式: 0x... 开头
-                    # v2.0 格式: #序号 [D深度] [类型] 0x... 开头
+                    # v2.0/v2.1 格式: #序号 [D深度] [类型] 0x... 开头
                     if line.startswith('0x') or (line.startswith('#') and len(line) > 1 and line[1].isdigit()):
                         stats['instructions'] += 1
                     # v1.0: memory read/write
-                    # v2.0: MEM_read/MEM_write
+                    # v2.0/v2.1: MEM_read/MEM_write
                     elif 'memory read' in line or 'MEM_read' in line:
                         stats['memory_reads'] += 1
                     elif 'memory write' in line or 'MEM_write' in line:
@@ -646,7 +533,7 @@ class TraceInstruction:
     operands: str         # 操作数
     reg_changes: str      # 寄存器变化
     line_num: int         # 行号
-    # v2.0 新增字段
+    # v2.0/v2.1 新增字段
     seq: int = 0          # 指令序号
     depth: int = 0        # 调用深度
     op_type: str = ""     # 操作类型 (A/L/M/B/C/R)
@@ -661,7 +548,7 @@ class MemoryAccess:
     data_size: int        # 数据大小
     data_value: int       # 数据值
     line_num: int         # 行号
-    # v2.0 新增字段
+    # v2.0/v2.1 新增字段
     src_reg: str = ""           # 源寄存器名（仅写入）
     src_reg_value: int = 0      # 源寄存器值（仅写入）
 
@@ -679,26 +566,20 @@ class FunctionCall:
 
 class QBDITraceAnalyzer:
     """
-    QBDI Trace 文件解析器（支持 v1.0 和 v2.0 格式）
+    QBDI Trace 文件解析器（支持 v1.0, v2.0, v2.1 格式）
     
-    v1.0 文件结构：
-    1. 头部: [hook] target=0x... argc=...
-    2. 入口: ====== ENTER 0x... ======
-    3. 指令: 0x地址  偏移  汇编指令  ;寄存器变化
-    4. 内存: memory read/write at 0x..., ...
-    5. Dump: hexdump 格式的内存块
-    6. 出口: ====== LEAVE 0x... ======
-    7. 结果: [gqb] vm.call ok=..., ret=...
-    
-    v2.0 新增格式：
-    - 头部注释: # QBDI Trace v2.0 ...
-    - 指令: #序号 [D深度] [类型] 0x地址 偏移 汇编 ;多寄存器变化
-    - 内存: MEM_read/write @0x地址 size=大小 val=值
-    - 源寄存器: SRC_REG=X8 val=0x...
+    v2.1 格式：
+    # QBDI Trace v2.1 (optimized)
+    # Format: #seq [Ddepth] [type] address offset instruction ;reg_changes
+    #
+    #1 [D1] [M] 0x7dd046e244  0x21244  ldr x16, #0x8  ;X16=0x0->0x7e8897c000
+      MEM_read @0x7dd046e24c size=8 val=00c097887e000000
+    #7 [D1] [M] 0x7e88dbd004  0x0  stp q30, q31, [sp, #-0x20]!
+      MEM_write @0xb400007d4830cf50 size=8 val=0000000000000000
+        SRC_REG=X20 val=0x0
     """
     
-    # v2.0 正则表达式
-    # 注意：日志中使用 tab 分隔，需要用 \s+ 匹配
+    # v2.0/v2.1 正则表达式
     INSTRUCTION_V2_RE = re.compile(
         r'^#(\d+)\s+'                         # 指令序号
         r'\[D(\d+)\]\s+'                      # 调用深度
@@ -709,13 +590,13 @@ class QBDITraceAnalyzer:
         r'(.*)$'                              # 操作数和寄存器变化
     )
     
-    # v2.0 内存访问正则（行被 strip 后不要求前导空格）
+    # v2.0/v2.1 内存访问正则
     MEMORY_V2_RE = re.compile(
         r'^MEM_(read|write)\s+@(0x[0-9a-fA-F]+)\s+'
         r'size=(\d+)\s+val=([0-9a-fA-F]+)'
     )
     
-    # v2.0 源寄存器正则
+    # v2.0/v2.1 源寄存器正则
     SRC_REG_RE = re.compile(
         r'^SRC_REG=([XWxw]\d+)\s+val=(0x[0-9a-fA-F]+)'
     )
@@ -746,7 +627,7 @@ class QBDITraceAnalyzer:
         # 内存访问热点
         self.mem_access_hotspots: Dict[int, int] = {}  # address -> access_count
         
-        # v2.0 新增
+        # v2.0/v2.1 新增
         self.trace_version: str = "1.0"
         self.op_type_counts: Dict[str, int] = {}  # 操作类型统计
         self.max_depth: int = 0  # 最大调用深度
@@ -754,7 +635,7 @@ class QBDITraceAnalyzer:
     
     def parse(self, quick_mode: bool = False) -> bool:
         """
-        解析 trace 文件（支持 v1.0 和 v2.0 格式）
+        解析 trace 文件（支持 v1.0, v2.0, v2.1 格式）
         
         Args:
             quick_mode: True=仅统计不存储详细数据 (大文件推荐)
@@ -782,14 +663,15 @@ class QBDITraceAnalyzer:
                         continue
                     
                     # 0. 检测版本和跳过注释
-                    # 注意：v2.0 指令行也以 # 开头 (#123 [D1] ...)，需要区分
                     if line.startswith('#'):
                         if len(line) > 1 and line[1].isdigit():
-                            # 这是 v2.0 指令行，不跳过
+                            # 这是 v2.0/v2.1 指令行，不跳过
                             pass
                         else:
                             # 这是注释行
-                            if 'QBDI Trace v2' in line:
+                            if 'QBDI Trace v2.1' in line:
+                                self.trace_version = "2.1"
+                            elif 'QBDI Trace v2' in line:
                                 self.trace_version = "2.0"
                             continue
                     
@@ -800,7 +682,7 @@ class QBDITraceAnalyzer:
                     
                     # 2. 解析函数入口
                     if line.startswith('====== ENTER') or 'ENTER' in line and '======' in line:
-                        addr_match = re.search(r'ENTER\s+(0x[0-9a-fA-F]+)', line)
+                        addr_match = re.search(r'ENTER\s+(?:\[#\d+\]\s+)?(0x[0-9a-fA-F]+)', line)
                         if addr_match:
                             addr = int(addr_match.group(1), 16)
                             current_func_enter_line = line_num
@@ -811,7 +693,7 @@ class QBDITraceAnalyzer:
                     
                     # 3. 解析函数出口
                     if 'LEAVE' in line and '======' in line:
-                        addr_match = re.search(r'LEAVE\s+(0x[0-9a-fA-F]+)', line)
+                        addr_match = re.search(r'LEAVE\s+(?:\[#\d+\]\s+)?(0x[0-9a-fA-F]+)', line)
                         if addr_match:
                             addr = int(addr_match.group(1), 16)
                             self.function_calls.append(FunctionCall(
@@ -824,7 +706,7 @@ class QBDITraceAnalyzer:
                             ))
                         continue
                     
-                    # 4a. v2.0 指令格式: #序号 [D深度] [类型] 0x地址 ...
+                    # 4a. v2.0/v2.1 指令格式: #序号 [D深度] [类型] 0x地址 ...
                     v2_match = self.INSTRUCTION_V2_RE.match(line)
                     if v2_match:
                         self.instruction_count += 1
@@ -854,7 +736,7 @@ class QBDITraceAnalyzer:
                                 self.instructions.append(inst)
                         continue
                     
-                    # 5a. v2.0 内存访问: MEM_read/write @0x...
+                    # 5a. v2.0/v2.1 内存访问: MEM_read/write @0x...
                     v2_mem_match = self.MEMORY_V2_RE.match(line)
                     if v2_mem_match:
                         access = self._parse_memory_access_v2(v2_mem_match, line_num)
@@ -871,7 +753,7 @@ class QBDITraceAnalyzer:
                                 self.memory_accesses.append(access)
                         continue
                     
-                    # 5b. v2.0 源寄存器: SRC_REG=X8 val=0x...
+                    # 5b. v2.0/v2.1 源寄存器: SRC_REG=X8 val=0x...
                     src_reg_match = self.SRC_REG_RE.match(line)
                     if src_reg_match:
                         if self.memory_accesses:
@@ -911,7 +793,7 @@ class QBDITraceAnalyzer:
     
     def _parse_hook_header(self, line: str):
         """解析 [hook] 头部"""
-        # [hook] target=0x7dd0462244 argc=5
+        # [hook] call=#1 target=0x7dd0462244 argc=5 (...)
         target_match = re.search(r'target=(0x[0-9a-fA-F]+)', line)
         argc_match = re.search(r'argc=(\d+)', line)
         if target_match:
@@ -920,8 +802,7 @@ class QBDITraceAnalyzer:
             self.argc = int(argc_match.group(1))
     
     def _parse_instruction_v2(self, match: re.Match, line_num: int) -> Optional[TraceInstruction]:
-        """解析 v2.0 指令行"""
-        # #12345 [D1] [A] 0x7dd0462244    0x21244    add x8, x9, x10    ;X8=0x0->0x100
+        """解析 v2.0/v2.1 指令行"""
         try:
             seq = int(match.group(1))
             depth = int(match.group(2))
@@ -953,7 +834,6 @@ class QBDITraceAnalyzer:
     
     def _parse_instruction(self, line: str, line_num: int) -> Optional[TraceInstruction]:
         """解析 v1.0 指令行"""
-        # 0x0000007dd0462244	0x21244			ldr	x16, #8	;X16=0x0 -> 0x7e9c983100
         try:
             parts = line.split('\t')
             if len(parts) < 3:
@@ -962,14 +842,12 @@ class QBDITraceAnalyzer:
             address = int(parts[0], 16)
             offset = int(parts[1], 16)
             
-            # 汇编部分可能有分号注释
             asm_and_comment = '\t'.join(parts[2:])
             if ';' in asm_and_comment:
                 asm_part, reg_changes = asm_and_comment.rsplit(';', 1)
             else:
                 asm_part, reg_changes = asm_and_comment, ''
             
-            # 分离助记符和操作数
             asm_parts = asm_part.strip().split(None, 1)
             mnemonic = asm_parts[0] if asm_parts else ''
             operands = asm_parts[1] if len(asm_parts) > 1 else ''
@@ -986,10 +864,9 @@ class QBDITraceAnalyzer:
             return None
     
     def _parse_memory_access_v2(self, match: re.Match, line_num: int) -> Optional[MemoryAccess]:
-        """解析 v2.0 内存访问行"""
-        #   MEM_write @0x7ffc1fc0 size=8 val=ff01000000000000
+        """解析 v2.0/v2.1 内存访问行"""
         try:
-            access_type = match.group(1)  # 'read' or 'write'
+            access_type = match.group(1)
             address = int(match.group(2), 16)
             data_size = int(match.group(3))
             data_value = int(match.group(4), 16)
@@ -1007,7 +884,6 @@ class QBDITraceAnalyzer:
     
     def _parse_memory_access(self, line: str, line_num: int) -> Optional[MemoryAccess]:
         """解析 v1.0 内存访问行"""
-        # memory read at 0x7dd046224c, instruction address = 0x7dd0462244, data size = 8, data value = 0031989c7e000000
         try:
             access_type = 'read' if 'memory read' in line else 'write'
             
@@ -1032,7 +908,6 @@ class QBDITraceAnalyzer:
     
     def _parse_result(self, line: str):
         """解析结果行"""
-        # [gqb] vm.call ok=1, ret=0x1
         ok_match = re.search(r'ok=(\d+)', line)
         ret_match = re.search(r'ret=(0x[0-9a-fA-F]+)', line)
         if ok_match:
@@ -1065,10 +940,10 @@ class QBDITraceAnalyzer:
         log_info(f"   内存写: {self.mem_write_count:,}")
         log_info(f"   函数调用: {len(self.function_calls)}")
         
-        # v2.0 特有统计
-        if self.trace_version == "2.0" and self.op_type_counts:
+        # v2.0/v2.1 特有统计
+        if self.trace_version in ["2.0", "2.1"] and self.op_type_counts:
             log_info("")
-            log_info("🏷️  操作类型分布 (v2.0):")
+            log_info("🏷️  操作类型分布:")
             op_names = {'A': '算术', 'L': '逻辑', 'M': '内存', 'B': '分支', 'C': '调用', 'R': '返回'}
             for op_code in ['A', 'L', 'M', 'B', 'C', 'R']:
                 count = self.op_type_counts.get(op_code, 0)
@@ -1157,4 +1032,3 @@ def analyze_trace_file(trace_file: str, quick_mode: bool = True) -> Optional[QBD
         analyzer.print_summary()
         return analyzer
     return None
-
