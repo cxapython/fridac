@@ -317,6 +317,47 @@ fridac> smalltrace_analyze ~/Desktop/trace.log
 >
 > 📖 详细分析指南请参考 [SMALLTRACE_ANALYSIS_GUIDE.md](SMALLTRACE_ANALYSIS_GUIDE.md)
 
+### 主动调用脚本 (smalltrace_active.js)
+
+对于需要主动触发函数调用的场景，可以使用 `scripts/smalltrace_active.js` 脚本：
+
+**功能特性**：
+- 🔧 **一体化操作**: 安装 QBDI Hook + 主动调用函数
+- 🎯 **智能签名识别**: 自动尝试多种函数签名
+- 📦 **模块管理**: 支持动态加载 SO
+
+| 函数 | 说明 |
+|------|------|
+| `traceAndCall(so, offset, input, argc)` | 追踪 + 主动调用 |
+| `loadSo(path, java)` | 加载 SO (支持 Java/Native) |
+| `listModules(filter)` | 列出已加载模块 |
+| `callRaw(so, offset, ret, types, args)` | 自定义签名调用 |
+| `stHelp()` | 显示帮助 |
+
+**使用示例**：
+
+```bash
+# 在 Frida CLI 中加载脚本
+frida -U -l scripts/smalltrace_active.js -f com.example.app --no-pause
+
+# 追踪并调用
+traceAndCall('libjnicalculator.so', 0x21244, 'hello')
+
+# 指定参数数量
+traceAndCall('libtarget.so', 0x1000, 'test', 3)
+
+# 加载 SO 并调用
+loadSo('libtarget.so', true)  // 使用 Java System.loadLibrary
+listModules('target')          // 确认已加载
+
+# 自定义签名调用
+callRaw('libjnicalculator.so', 0x21244, 'int', 
+        ['pointer', 'int', 'pointer'], 
+        [Memory.allocUtf8String('hello'), 5, Memory.alloc(256)])
+```
+
+> 💡 **提示**: `traceAndCall` 会自动尝试常见的 3-5 参数签名，适用于大多数加密函数。如需精确控制，使用 `callRaw`。
+
 ## 📁 项目结构
 
 ```
