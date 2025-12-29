@@ -27,6 +27,7 @@ Small-Trace 是基于 [QBDI (QuarkslaB Dynamic binary Instrumentation)](https://
 - 生成完整的执行流日志
 - **JNI 追踪**: 自动检测 `FindClass`, `GetMethodID`, `RegisterNatives` 等调用
 - **Syscall 追踪**: 自动检测 `openat`, `read`, `write`, `mmap` 等系统调用
+- **v2.2 性能优化**: 模块基址缓存 + 快速指令分类，提升 30-50% 性能
 
 ### 1.2 适用场景
 
