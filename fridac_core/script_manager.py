@@ -532,7 +532,7 @@ function help() {
     LOG("  --hook <函数名>                      # 连接后自动执行Hook函数", { c: Color.Cyan });
     LOG("  --hook-args <参数1,参数2,...>        # Hook函数的参数(逗号分隔)", { c: Color.Cyan });
     LOG("  --preset <预设名>                    # 使用预设Hook套件", { c: Color.White });
-    LOG("    示例: fridac -f com.app --hook findNativeFuncAddress --hook-args \"encrypt,com.app.Native\"", { c: Color.Yellow });
+    LOG("    示例: fridac -f com.app --hook findNativeFuncAddress --hook-args 'encrypt,com.app.Native'", { c: Color.Yellow });
     LOG("    示例: fridac -f com.app --hook traceRegisterNatives", { c: Color.Yellow });
     LOG("    示例: fridac -f com.app --preset jni_analysis", { c: Color.Yellow });
     LOG("    预设: jni_analysis, crypto_analysis, network_analysis, anti_debug", { c: Color.Gray });
