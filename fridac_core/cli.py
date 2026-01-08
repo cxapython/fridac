@@ -205,14 +205,21 @@ def run_frida_session(spawn_mode=False, target_package=None, force_show_apps=Fal
     if not session.connect_to_app(target_app, spawn_mode):
         return
     
-    # Spawn 模式：脚本已加载，先 resume 应用，再执行早期 hook
-    # 早期 hook（如 findNativeFuncAddress）内部会 hook RegisterNatives 等待动态注册
-    if spawn_mode:
+    # Spawn 模式且有早期 hook：先执行 hook（设置 RegisterNatives 等），再 resume
+    # 这样确保 hook 在 SO 加载之前就设置好
+    if spawn_mode and (early_hook or preset):
+        log_info("⏳ 设置早期 Hook（应用暂停中）...")
+        time.sleep(0.3)  # 等待脚本内部初始化
+        _execute_early_hooks(session, early_hook, hook_args, preset, config_file)
+        log_info("📦 早期 Hook 已设置，恢复应用执行...")
         session.resume_app()
-    
-    if early_hook or preset:
+    elif spawn_mode:
+        # Spawn 模式但无早期 hook，直接 resume
+        session.resume_app()
+    elif early_hook or preset:
+        # 非 Spawn 模式，正常执行早期 hook
         log_info("⏳ 等待脚本完全加载...")
-        time.sleep(0.5 if not spawn_mode else 1.5)  # Spawn模式多等一会儿让Java初始化
+        time.sleep(0.5)
         _execute_early_hooks(session, early_hook, hook_args, preset, config_file)
     
     try:
