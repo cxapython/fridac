@@ -24,33 +24,15 @@
  * @param {string} targetClassName - Java类的完整路径(包名.类名)
  */
 function findNativeFuncAddress(nativeFuncName, targetClassName) {
-    // 确保在Java.perform环境中执行
-    if (typeof Java === 'undefined' || !Java.available) {
-        // 如果不在Java环境中,延迟执行
-        setTimeout(function() {
-            if (typeof Java !== 'undefined' && Java.available) {
-                Java.perform(function() {
-                    _findNativeFuncAddressImpl(nativeFuncName, targetClassName);
-                });
-            }
-        }, 1000);
-        return;
-    }
-    
-    // 在Java.perform中执行
-    Java.perform(function() {
-        _findNativeFuncAddressImpl(nativeFuncName, targetClassName);
-    });
+    // 直接执行，不需要 Java.perform（与原生 frida 脚本保持一致）
+    _findNativeFuncAddressImpl(nativeFuncName, targetClassName);
 }
 
 function _findNativeFuncAddressImpl(nativeFuncName, targetClassName) {
     // 统一日志函数
     function __LOG(msg, opts = {}) {
-        if (typeof LOG !== 'undefined') {
-            LOG(msg, opts);
-            return;
-        }
-        const colorMap = {
+        // 颜色映射表（字符串名称 -> ANSI 代码）
+        var colorMap = {
             Cyan: '\x1b[36m',
             White: '\x1b[37m',
             Green: '\x1b[32m',
@@ -58,16 +40,30 @@ function _findNativeFuncAddressImpl(nativeFuncName, targetClassName) {
             Red: '\x1b[31m',
             Blue: '\x1b[34m',
             Magenta: '\x1b[35m',
+            Gray: '\x1b[90m',
             Reset: '\x1b[0m',
             Bold: '\x1b[1m',
             Dim: '\x1b[2m'
         };
-        const color = opts.c ? colorMap[opts.c] || '' : '';
-        const bold = opts.bold ? colorMap.Bold : '';
-        const dim = opts.dim ? colorMap.Dim : '';
-        const timestamp = new Date().toLocaleTimeString();
-        const prefix = `${colorMap.Dim}[${timestamp}]${colorMap.Reset} 🔍 `;
-        const formattedMsg = `${prefix}${bold}${color}${msg}${colorMap.Reset}`;
+        
+        // 优先使用 fridac 的 LOG 函数
+        if (typeof LOG !== 'undefined' && typeof Color !== 'undefined') {
+            // 将字符串颜色名转换为 Color 对象的值
+            var colorOpts = {};
+            if (opts.c && Color[opts.c]) {
+                colorOpts.c = Color[opts.c];
+            }
+            LOG(msg, colorOpts);
+            return;
+        }
+        
+        // 回退：直接使用 send
+        var color = opts.c ? colorMap[opts.c] || '' : '';
+        var bold = opts.bold ? colorMap.Bold : '';
+        var dim = opts.dim ? colorMap.Dim : '';
+        var timestamp = new Date().toLocaleTimeString();
+        var prefix = colorMap.Dim + '[' + timestamp + ']' + colorMap.Reset + ' 🔍 ';
+        var formattedMsg = prefix + bold + color + msg + colorMap.Reset;
         try {
             send(formattedMsg);
         } catch (e) {
@@ -89,17 +85,6 @@ function _findNativeFuncAddressImpl(nativeFuncName, targetClassName) {
     __LOG("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", { c: "Cyan", bold: true });
     __LOG(`📝 目标类: ${targetClassName}`, { c: "Yellow" });
     __LOG(`📝 目标方法: ${nativeFuncName}`, { c: "Yellow" });
-
-    // 等待Java环境完全初始化
-    try {
-        Java.vm.getEnv();
-    } catch (e) {
-        __LOG("⏳ Java环境未就绪,等待1秒后重试...", { c: "Yellow" });
-        setTimeout(function() {
-            _findNativeFuncAddressImpl(nativeFuncName, targetClassName);
-        }, 1000);
-        return;
-    }
 
     // 查找RegisterNatives地址
     let symbols = [];

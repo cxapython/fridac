@@ -205,15 +205,15 @@ def run_frida_session(spawn_mode=False, target_package=None, force_show_apps=Fal
     if not session.connect_to_app(target_app, spawn_mode):
         return
     
+    # Spawn 模式：脚本已加载，先 resume 应用，再执行早期 hook
+    # 早期 hook（如 findNativeFuncAddress）内部会 hook RegisterNatives 等待动态注册
+    if spawn_mode:
+        session.resume_app()
+    
     if early_hook or preset:
         log_info("⏳ 等待脚本完全加载...")
-        if spawn_mode:
-            # Spawn模式需要更长的等待时间,确保Java环境初始化
-            time.sleep(2.0)
-        else:
-            time.sleep(0.5)
-    
-    _execute_early_hooks(session, early_hook, hook_args, preset, config_file)
+        time.sleep(0.5 if not spawn_mode else 1.5)  # Spawn模式多等一会儿让Java初始化
+        _execute_early_hooks(session, early_hook, hook_args, preset, config_file)
     
     try:
         run_interactive_session(session)

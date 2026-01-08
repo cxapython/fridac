@@ -399,12 +399,12 @@ class FridacSession:
             log_success("连接到设备: {}".format(self.device))
             
             if spawn_mode:
-                # Spawn 模式
+                # Spawn 模式 - 注意：先不 resume，等脚本加载完成后再 resume
                 log_info("启动应用: {}".format(app_name))
                 pid = self.device.spawn([app_name])
                 self.target_process = self.device.attach(pid)
-                self.device.resume(pid)
-                log_success("应用已启动 (PID: {})".format(pid))
+                self._spawn_pid = pid  # 保存 PID，稍后 resume
+                log_success("应用已启动 (PID: {})，等待脚本注入...".format(pid))
             else:
                 # Attach 模式
                 log_info("连接到应用: {}".format(app_name))
@@ -561,6 +561,18 @@ class FridacSession:
                 log_warning("💡 提示: 请确保应用正在运行，或使用 -f 参数启动应用")
             
             return False
+    
+    def resume_app(self):
+        """恢复 Spawn 模式下暂停的应用（用于早期 hook 执行后）"""
+        if hasattr(self, '_spawn_pid') and self._spawn_pid:
+            log_info("📦 恢复应用执行...")
+            try:
+                self.device.resume(self._spawn_pid)
+                log_success("✅ 应用已恢复运行")
+            except Exception as e:
+                log_warning(f"⚠️ 恢复应用时出错: {e}")
+            finally:
+                self._spawn_pid = None  # 清除，避免重复 resume
     
     def load_wallbreaker(self):
         """加载 wallbreaker 插件（用于对象搜索）"""
