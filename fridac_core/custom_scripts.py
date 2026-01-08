@@ -792,6 +792,9 @@ function monitorSensitiveNetwork(sensitiveFields) {
                 
                 # 移除JSDoc注释以减少大小
                 content = re.sub(r'/\*\*[\s\S]*?\*/', '', content)
+                # 确保脚本内容以换行结尾，避免和下一个脚本连在一起
+                if not content.endswith('\n'):
+                    content += '\n'
                 imports.append(content)
                 
             except Exception as e:
@@ -871,3 +874,127 @@ function monitorSensitiveNetwork(sensitiveFields) {
             'scripts_dir': self.scripts_dir,
             'last_scan': datetime.now().isoformat()
         }
+    
+    def list_available_scripts(self) -> List[Dict[str, Any]]:
+        """列出所有可用的自定义脚本"""
+        print("\n" + "=" * 60)
+        print("📦 可用的自定义脚本")
+        print("=" * 60)
+        
+        script_list = []
+        idx = 1
+        
+        for scripts_dir in self.scripts_dirs:
+            if not os.path.exists(scripts_dir):
+                continue
+            
+            print(f"\n📁 {scripts_dir}")
+            print("-" * 50)
+            
+            for dirpath, _dirnames, filenames in os.walk(scripts_dir):
+                for filename in sorted(filenames):
+                    if not filename.endswith('.js'):
+                        continue
+                    
+                    file_path = os.path.join(dirpath, filename)
+                    rel_path = os.path.relpath(file_path, scripts_dir)
+                    
+                    desc, funcs = "", []
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        desc_match = re.search(r'@description\s+(.+?)(?:\n|\*)', content)
+                        if desc_match:
+                            desc = desc_match.group(1).strip()[:50]
+                        func_matches = re.findall(r'function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(', content)
+                        funcs = [f for f in func_matches if not f.startswith('_')][:3]
+                    except:
+                        pass
+                    
+                    script_list.append({
+                        'index': idx, 'name': filename.replace('.js', ''),
+                        'path': rel_path, 'full_path': file_path,
+                        'description': desc, 'functions': funcs
+                    })
+                    
+                    print(f"  [{idx:2d}] {rel_path}")
+                    if desc:
+                        print(f"       {desc}")
+                    if funcs:
+                        print(f"       函数: {', '.join(funcs)}")
+                    idx += 1
+        
+        print("\n" + "=" * 60)
+        print(f"共 {len(script_list)} 个脚本")
+        print("\n💡 使用: fridac --scripts ssl_bypass,anti_anti_debug")
+        print("         fridac --no-scripts  # 不加载自定义脚本")
+        print("         fridac -s            # 交互式选择")
+        print("=" * 60 + "\n")
+        return script_list
+    
+    def select_scripts_interactive(self) -> List[str]:
+        """交互式选择要加载的脚本"""
+        script_list = []
+        idx = 1
+        
+        for scripts_dir in self.scripts_dirs:
+            if not os.path.exists(scripts_dir):
+                continue
+            for dirpath, _dirnames, filenames in os.walk(scripts_dir):
+                for filename in sorted(filenames):
+                    if not filename.endswith('.js'):
+                        continue
+                    file_path = os.path.join(dirpath, filename)
+                    desc = ""
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read(500)
+                        desc_match = re.search(r'@description\s+(.+?)(?:\n|\*)', content)
+                        if desc_match:
+                            desc = desc_match.group(1).strip()[:40]
+                    except:
+                        pass
+                    script_list.append({'index': idx, 'name': filename.replace('.js', ''),
+                                        'full_path': file_path, 'description': desc})
+                    idx += 1
+        
+        if not script_list:
+            log_warning("没有找到可用的自定义脚本")
+            return []
+        
+        print("\n" + "=" * 60)
+        print("📦 选择要加载的脚本 (输入编号，逗号分隔)")
+        print("=" * 60)
+        for s in script_list:
+            desc_str = f" - {s['description']}" if s['description'] else ""
+            print(f"  [{s['index']:2d}] {s['name']}{desc_str}")
+        print("-" * 60)
+        print("  [ 0] 全部加载  [-1] 不加载")
+        print("=" * 60)
+        
+        try:
+            selection = input("\n选择 (如 1,3,5): ").strip()
+            if selection == '0' or selection == '':
+                return [s['name'] for s in script_list]
+            elif selection == '-1':
+                return []
+            else:
+                selected = []
+                for part in selection.split(','):
+                    part = part.strip()
+                    if '-' in part and not part.startswith('-'):
+                        start, end = part.split('-')
+                        for i in range(int(start), int(end) + 1):
+                            for s in script_list:
+                                if s['index'] == i:
+                                    selected.append(s['name'])
+                    else:
+                        for s in script_list:
+                            if s['index'] == int(part):
+                                selected.append(s['name'])
+                if selected:
+                    log_success(f"✅ 已选择: {', '.join(selected)}")
+                return selected
+        except:
+            log_warning("选择取消，加载全部")
+            return [s['name'] for s in script_list]

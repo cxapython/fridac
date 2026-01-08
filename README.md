@@ -432,13 +432,28 @@ hooknative SSL_write true 10        # 显示10行栈
 <details>
 <summary>🚀 早期 Hook (Spawn 模式)</summary>
 
+在应用启动时自动执行 Hook 函数，无需手动输入：
+
 ```bash
-fridac -f com.app --hook traceRegisterNatives       # 单个 Hook
+# 基础用法
+fridac -f com.app --hook traceRegisterNatives       # 执行无参数函数
 fridac -f com.app --preset jni_analysis             # 预设套件
 fridac -f com.app --preset crypto_analysis -o log   # 输出到文件
 
+# 带参数的 Hook (使用 --hook-args)
+fridac -f com.app --hook findNativeFuncAddress --hook-args "encrypt,com.app.Native"
+fridac -f com.app --hook traceClass --hook-args "com.example.MainActivity"
+fridac -f com.app --hook traceMethod --hook-args "com.example.App.decrypt,1"
+
 # 可用预设: jni_analysis, crypto_analysis, network_analysis, anti_debug
 ```
+
+**参数说明**：
+| 参数 | 说明 |
+|------|------|
+| `--hook <函数名>` | 指定要执行的 Hook 函数（来自内置或自定义脚本） |
+| `--hook-args <参数>` | 函数参数，多个参数用逗号分隔 |
+| `--preset <预设>` | 使用预定义的 Hook 套件 |
 </details>
 
 <details>

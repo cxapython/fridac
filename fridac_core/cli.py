@@ -172,8 +172,14 @@ def _execute_early_hooks(session, early_hook, hook_args, preset, config_file):
 
 def run_frida_session(spawn_mode=False, target_package=None, force_show_apps=False, 
                       early_hook=None, hook_args=None, preset=None, config_file=None, 
-                      output_file=None, append_mode=False):
+                      output_file=None, append_mode=False, 
+                      select_scripts=False, scripts_filter=None, no_scripts=False):
     """运行 Frida 会话"""
+    
+    # 设置脚本加载选项
+    os.environ['FRIDAC_NO_CUSTOM_SCRIPTS'] = '1' if no_scripts else ''
+    os.environ['FRIDAC_SCRIPTS_FILTER'] = scripts_filter or ''
+    os.environ['FRIDAC_SELECT_SCRIPTS'] = '1' if select_scripts else ''
     
     if force_show_apps or not target_package:
         target_app = find_target_app()
@@ -201,7 +207,11 @@ def run_frida_session(spawn_mode=False, target_package=None, force_show_apps=Fal
     
     if early_hook or preset:
         log_info("⏳ 等待脚本完全加载...")
-        time.sleep(0.5)
+        if spawn_mode:
+            # Spawn模式需要更长的等待时间,确保Java环境初始化
+            time.sleep(2.0)
+        else:
+            time.sleep(0.5)
     
     _execute_early_hooks(session, early_hook, hook_args, preset, config_file)
     
@@ -276,10 +286,36 @@ frida-server 管理:
     parser.add_argument('--data-path', type=str,
                        help='指定数据文件路径 (JS 脚本目录)')
     
+    # 自定义脚本选择
+    parser.add_argument('-s', '--select-scripts', action='store_true',
+                       help='交互式选择要加载的自定义脚本')
+    
+    parser.add_argument('--scripts', type=str,
+                       help='指定要加载的脚本 (逗号分隔，如: ssl_bypass,anti_anti_debug)')
+    
+    parser.add_argument('--no-scripts', action='store_true',
+                       help='不加载任何自定义脚本 (仅加载核心功能)')
+    
+    parser.add_argument('--list-scripts', action='store_true',
+                       help='列出所有可用的自定义脚本')
+    
     parser.add_argument('--version', action='version', 
                        version='fridac 1.0.0 (Frida {})'.format(get_frida_version()))
     
     args = parser.parse_args()
+    
+    # 如果指定了数据路径，更新环境变量（需在使用 DATA_PATH 前处理）
+    if args.data_path:
+        os.environ['FRIDAC_DATA_PATH'] = args.data_path
+    
+    # 处理列出脚本命令
+    if args.list_scripts:
+        from fridac_core.custom_scripts import CustomScriptManager
+        data_path = os.environ.get('FRIDAC_DATA_PATH', DATA_PATH)
+        manager = CustomScriptManager(data_path)
+        manager.scan_scripts()
+        manager.list_available_scripts()
+        return
     
     # 处理 frida-server 管理命令
     if args.stop_server:
@@ -295,11 +331,7 @@ frida-server 管理:
         ensure_frida_server()
         return
     
-    # 如果指定了数据路径，更新环境变量
-    if args.data_path:
-        global DATA_PATH
-        DATA_PATH = args.data_path
-        os.environ['FRIDAC_DATA_PATH'] = DATA_PATH
+    # 数据路径已在前面处理
     
     target_package = None
     spawn_mode = False
@@ -338,7 +370,10 @@ frida-server 管理:
             preset=args.preset, 
             config_file=args.config,
             output_file=args.output, 
-            append_mode=args.append
+            append_mode=args.append,
+            select_scripts=args.select_scripts,
+            scripts_filter=args.scripts,
+            no_scripts=args.no_scripts
         )
     except KeyboardInterrupt:
         log_info("程序被用户中断")

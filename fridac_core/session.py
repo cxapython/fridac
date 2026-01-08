@@ -475,7 +475,36 @@ class FridacSession:
                 
             self.script = self.target_process.create_script(js_script)
             self.script.on('message', self.on_message)
-            self.script.load()
+            
+            # 添加超时保护（使用threading，因为macOS不支持SIGALRM）
+            import threading
+            load_timeout = False
+            
+            def timeout_handler():
+                nonlocal load_timeout
+                load_timeout = True
+            
+            # 脚本较大（约300KB+），需要更长的加载时间
+            timer = threading.Timer(60.0, timeout_handler)
+            timer.start()
+            
+            try:
+                self.script.load()
+            except Exception as e:
+                timer.cancel()  # 确保先取消定时器
+                error_msg = str(e).lower()
+                if load_timeout or "timeout" in error_msg:
+                    log_error("❌ 脚本加载超时")
+                    log_warning("💡 提示: 应用可能有反 Frida 检测，阻止脚本执行")
+                    log_warning("💡 建议: 使用魔改版 Frida (hluda) 或尝试其他注入时机")
+                elif "connection" in error_msg and "closed" in error_msg:
+                    log_error("❌ 连接在脚本加载时被关闭")
+                    log_warning("💡 提示: 应用检测到 Frida 并主动断开连接")
+                else:
+                    raise
+                return False
+            finally:
+                timer.cancel()
             
             # 初始化任务管理器
             self._setup_task_manager()
@@ -496,7 +525,7 @@ class FridacSession:
                     from fridac_core.device_manager import ensure_frida_server
                     if ensure_frida_server():
                         log_success("✅ frida-server 已启动，等待就绪...")
-                        import time
+                        # time 模块已在文件顶部导入
                         time.sleep(1)  # 等待 frida 客户端检测到服务器
                         # 重新尝试连接
                         return self.connect_to_app(app_name, spawn_mode)
@@ -510,7 +539,27 @@ class FridacSession:
                 log_error("❌ frida-server 启动后仍无法连接，请检查设备状态")
                 return False
         except Exception as e:
+            error_msg = str(e).lower()
             log_error("连接失败: {}".format(e))
+            
+            # 提供更有帮助的错误提示
+            if "timeout" in error_msg:
+                log_warning("💡 提示: 脚本加载超时，可能原因：")
+                log_warning("   1. 应用有反 Frida 检测，阻止脚本执行")
+                log_warning("   2. 脚本过大或有阻塞操作")
+                log_warning("   3. 设备性能不足")
+                log_warning("💡 建议: 尝试使用魔改版 Frida (如 hluda) 或 spawn 模式 (-f)")
+            elif "connection" in error_msg and "closed" in error_msg:
+                log_warning("💡 提示: 连接被目标应用关闭，可能原因：")
+                log_warning("   1. 应用检测到 Frida 注入并主动断开")
+                log_warning("   2. 应用有 ptrace 检测或 /proc/self 扫描")
+                log_warning("💡 建议:")
+                log_warning("   1. 使用 spawn 模式 (-f) 在应用启动前注入")
+                log_warning("   2. 使用魔改版 Frida (hluda/strongR-frida)")
+                log_warning("   3. 配合 antiAntiDebug() 等反检测函数")
+            elif "process not found" in error_msg:
+                log_warning("💡 提示: 请确保应用正在运行，或使用 -f 参数启动应用")
+            
             return False
     
     def load_wallbreaker(self):

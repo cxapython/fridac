@@ -166,9 +166,27 @@ def _load_custom_scripts(script_path):
     """加载用户自定义脚本"""
     data_path = _get_data_path()
     
+    # 检查是否禁用自定义脚本
+    if os.environ.get('FRIDAC_NO_CUSTOM_SCRIPTS'):
+        log_info("🚫 已禁用自定义脚本加载")
+        return ""
+    
     try:
         # 初始化自定义脚本管理器
         custom_manager = CustomScriptManager(data_path)
+        
+        # 检查是否需要交互式选择
+        if os.environ.get('FRIDAC_SELECT_SCRIPTS'):
+            selected_scripts = custom_manager.select_scripts_interactive()
+            if not selected_scripts:
+                log_info("🚫 未选择任何脚本")
+                return ""
+            # 设置过滤器
+            os.environ['FRIDAC_SCRIPTS_FILTER'] = ','.join(selected_scripts)
+        
+        # 获取脚本过滤器
+        scripts_filter = os.environ.get('FRIDAC_SCRIPTS_FILTER', '')
+        filter_list = [s.strip() for s in scripts_filter.split(',') if s.strip()] if scripts_filter else None
         
         # 扫描并加载脚本
         loaded_count = custom_manager.scan_scripts()
@@ -177,11 +195,43 @@ def _load_custom_scripts(script_path):
             log_debug("未找到自定义脚本")
             return ""
         
+        # 如果有过滤器，只生成选中脚本的代码
+        if filter_list:
+            # 过滤脚本
+            filtered_scripts = {}
+            filtered_functions = {}
+            
+            for key, script in custom_manager.scripts.items():
+                script_name = os.path.basename(script.file_path).replace('.js', '')
+                # 支持模糊匹配
+                for filter_name in filter_list:
+                    if filter_name.lower() in script_name.lower() or script_name.lower() in filter_name.lower():
+                        filtered_scripts[key] = script
+                        # 同时过滤函数
+                        for func_name, func_info in script.functions.items():
+                            filtered_functions[func_name] = func_info
+                        break
+            
+            if not filtered_scripts:
+                log_warning(f"⚠️ 未找到匹配的脚本: {filter_list}")
+                return ""
+            
+            # 临时替换 scripts 和 functions
+            original_scripts = custom_manager.scripts
+            original_functions = custom_manager.functions
+            custom_manager.scripts = filtered_scripts
+            custom_manager.functions = filtered_functions
+            
+            log_success(f"🔧 已选择 {len(filtered_scripts)} 个脚本: {', '.join([os.path.basename(s.file_path) for s in filtered_scripts.values()])}")
+        
         # 生成导入代码
         custom_imports = custom_manager.generate_script_imports()
         custom_exports = custom_manager.generate_rpc_exports()
         
-        # 汇总信息已在 CustomScriptManager.scan_scripts() 中输出
+        # 恢复原始数据（如果有过滤）
+        if filter_list:
+            custom_manager.scripts = original_scripts
+            custom_manager.functions = original_functions
         
         # 将自定义脚本管理器保存为全局变量，供其他模块使用
         globals()['_custom_script_manager'] = custom_manager
@@ -210,29 +260,26 @@ def get_custom_script_manager():
     
 
 def _wrap_with_java_perform(js_content):
-    """用 Java.perform 包裹 JavaScript 内容并添加 Shell 初始化"""
+    """添加 RPC 兜底和 Shell 初始化代码（不再把整个脚本包在 Java.perform 中）"""
     
-    wrapper_start = '''
-// 顶层RPC兜底：确保 eval 始终可用（即便 Java.perform 内部导出失败或未初始化）
+    # 前置代码：RPC 兜底 + 兼容层（不包含 Java.perform 包装）
+    wrapper_start = '''// 顶层RPC兜底：确保 eval 始终可用
 try {
     if (typeof rpc === 'undefined') { var rpc = {}; }
     if (typeof rpc.exports === 'undefined') { rpc.exports = {}; }
     if (typeof rpc.exports.eval === 'undefined') {
         rpc.exports.eval = function(code) {
             try {
-                // 直接在顶层求值
                 var value = eval(code);
                 return (value === undefined || value === null) ? true : value;
             } catch (e1) {
                 try {
-                    // 回退到 Java.perform 环境中求值
                     var __ret = undefined;
                     Java.perform(function() {
                         try { __ret = eval(code); } catch (_) { __ret = undefined; }
                     });
                     return (__ret === undefined || __ret === null) ? true : __ret;
                 } catch (e2) {
-                    // 兜底：返回错误字符串
                     return 'error: ' + String(e1 && e1.message ? e1.message : e1);
                 }
             }
@@ -240,47 +287,41 @@ try {
     }
 } catch (_) {}
 
-Java.perform(function() {
-    try {
-        // banner 由 Python 端打印
-    } catch(_) {}
-    // ===== 兼容层：为模块化 Native 工具补齐旧版便捷函数 =====
+// ===== 兼容层：为模块化 Native 工具补齐旧版便捷函数 =====
+(function() {
     try {
         if (typeof global === 'undefined') { global = this; }
-        // 1) nativeEnableAllHooks → 使用 ARM 套件
         if (typeof nativeEnableAllHooks === 'undefined' && typeof nativeEnableArmSuite === 'function') {
             global.nativeEnableAllHooks = function(showStack) {
-                try { nativeEnableArmSuite({ showStack: !!showStack }); LOG('[+] 兼容层: 已启用所有Native Hook', { c: Color.Green }); } catch (e) { try { LOG('❌ 兼容层(nativeEnableAllHooks)失败: ' + e.message, { c: Color.Red }); } catch(_){} }
+                try { nativeEnableArmSuite({ showStack: !!showStack }); } catch (e) {}
                 return true;
             };
         }
-        // 2) nativeQuickHookCrypto → 调用 crypto Hook
         if (typeof nativeQuickHookCrypto === 'undefined' && typeof nativeHookCryptoFunctions === 'function') {
             global.nativeQuickHookCrypto = function(algorithm) {
-                try { nativeHookCryptoFunctions(algorithm || 'all', 1); LOG('[+] 兼容层: 已启用加密Hook(' + (algorithm||'all') + ')', { c: Color.Green }); } catch (e) { try { LOG('❌ nativeQuickHookCrypto失败: ' + e.message, { c: Color.Red }); } catch(_){} }
+                try { nativeHookCryptoFunctions(algorithm || 'all', 1); } catch (e) {}
                 return true;
             };
         }
-        // 3) nativeQuickHookNetwork → 调用网络 Hook
         if (typeof nativeQuickHookNetwork === 'undefined' && typeof nativeHookNetworkFunctions === 'function') {
             global.nativeQuickHookNetwork = function() {
-                try { nativeHookNetworkFunctions(1); LOG('[+] 兼容层: 已启用网络Hook', { c: Color.Green }); } catch (e) { try { LOG('❌ nativeQuickHookNetwork失败: ' + e.message, { c: Color.Red }); } catch(_){} }
+                try { nativeHookNetworkFunctions(1); } catch (e) {}
                 return true;
             };
         }
-        // 4) nativeQuickAnalyzeApp → 简要模块信息
         if (typeof nativeQuickAnalyzeApp === 'undefined') {
             global.nativeQuickAnalyzeApp = function() {
-                try { var modules = Process.enumerateModulesSync ? Process.enumerateModulesSync() : Process.enumerateModules(); LOG('📦 已加载模块数量: ' + (modules && modules.length ? modules.length : '未知'), { c: Color.Cyan }); } catch (e) { try { LOG('❌ nativeQuickAnalyzeApp失败: ' + e.message, { c: Color.Red }); } catch(_){} }
+                try { var modules = Process.enumerateModulesSync ? Process.enumerateModulesSync() : Process.enumerateModules(); } catch (e) {}
                 return true;
             };
         }
-        // 5) 动态库延迟加载重挂钩规则（TLS/Conscrypt）
         if (typeof nativeRegisterRehook === 'function') {
             try { nativeRegisterRehook('rehook_tls', function(name){ var n=(name||'').toLowerCase(); return n.indexOf('ssl')!==-1 || n.indexOf('boringssl')!==-1; }, function(){ try { if (typeof nativeHookTLSFunctions==='function') nativeHookTLSFunctions(1); } catch(_){} }); } catch(_){ }
             try { nativeRegisterRehook('rehook_conscrypt', function(name){ var n=(name||'').toLowerCase(); return n.indexOf('conscrypt')!==-1; }, function(){ try { if (typeof nativeHookConscryptTLS==='function') nativeHookConscryptTLS(1); } catch(_){} }); } catch(_){ }
         }
     } catch (_){ }
+})();
+
 '''
     
     wrapper_end = '''
@@ -484,6 +525,18 @@ function help() {
         // 忽略自定义函数显示错误
     }
     
+    LOG("\\n🚀 命令行参数:", { c: Color.Green });
+    LOG("  fridac -f <包名>                     # Spawn 模式启动应用", { c: Color.White });
+    LOG("  fridac -p <包名>                     # 附加到已运行的应用", { c: Color.White });
+    LOG("  fridac -a                            # 选择应用列表", { c: Color.White });
+    LOG("  --hook <函数名>                      # 连接后自动执行Hook函数", { c: Color.Cyan });
+    LOG("  --hook-args <参数1,参数2,...>        # Hook函数的参数(逗号分隔)", { c: Color.Cyan });
+    LOG("  --preset <预设名>                    # 使用预设Hook套件", { c: Color.White });
+    LOG("    示例: fridac -f com.app --hook findNativeFuncAddress --hook-args \"encrypt,com.app.Native\"", { c: Color.Yellow });
+    LOG("    示例: fridac -f com.app --hook traceRegisterNatives", { c: Color.Yellow });
+    LOG("    示例: fridac -f com.app --preset jni_analysis", { c: Color.Yellow });
+    LOG("    预设: jni_analysis, crypto_analysis, network_analysis, anti_debug", { c: Color.Gray });
+    
     LOG("\\n💡 使用提示:", { c: Color.Green });
     LOG("  • 使用 Tab 键自动补全函数名和包名", { c: Color.Gray });
     LOG("  • 支持链式调用和复杂表达式", { c: Color.Gray });
@@ -679,11 +732,14 @@ if (typeof HookJobManager !== 'undefined') {
     LOG("⚠️  任务管理器未加载，跳过自动任务追踪", { c: Color.Yellow });
 }
 
-LOG("\\n🚀 fridac 已就绪!", { c: Color.Green });
-LOG("💡 输入 help() 查看可用函数", { c: Color.Cyan });
-LOG("💡 输入 q 或 exit 退出程序\\n", { c: Color.Cyan });
-
-}); // End of Java.perform
+// 启动完成提示
+setTimeout(function() {
+    try {
+        LOG("\\n🚀 fridac 已就绪!", { c: Color.Green });
+        LOG("💡 输入 help() 查看可用函数", { c: Color.Cyan });
+        LOG("💡 输入 q 或 exit 退出程序\\n", { c: Color.Cyan });
+    } catch(_) {}
+}, 100);
 '''
     
     # 处理自定义函数导出

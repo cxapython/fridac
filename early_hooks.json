@@ -72,6 +72,16 @@
           "args": [true]
         }
       ]
+    },
+    "find_native_func": {
+      "description": "查找Native函数地址 - 定位指定Native方法的实现",
+      "hooks": [
+        {
+          "function": "findNativeFuncAddress",
+          "args": ["sign", "com.example.EncryptUtils"],
+          "description": "查找指定Native方法的地址信息 (请修改为你的目标方法名和类名)"
+        }
+      ]
     }
   },
   "custom_hooks": {
