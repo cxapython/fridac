@@ -7,7 +7,6 @@
 截图一览
 
 
-<img width="934" height="215" alt="截屏2026-01-09 10 58 14" src="https://github.com/user-attachments/assets/a757677d-6c37-493b-9283-29dc62e30abc" />
 
 <img width="934" height="215" alt="截屏2026-01-09 10 54 25" src="https://github.com/user-attachments/assets/23d13178-c9f2-45a5-99f4-ca5b04587c3d" />
 
