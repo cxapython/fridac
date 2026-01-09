@@ -1,6 +1,7 @@
 # 🚀 fridac - 专业级 Frida Hook 工具集
 注:该项目由AI辅助生成有问题，有些功能可能还不太好用，因为代码体积量太大所以暂时没有详细排查只针对常用的hook操作做了测试，比如trace目前不能用。其他有问题提issuce就行。微信:italocxa，备注:fridac
 集成 **Java Hook**、**Native Hook** 和 **定位 Hook** 的 Frida CLI 工具，提供交互式调试环境。
+![Uploading 截屏2026-01-09 10.32.40.png…]()
 
 ## ✨ 核心特性
 
